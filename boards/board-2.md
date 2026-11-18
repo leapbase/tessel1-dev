@@ -7,8 +7,8 @@ Tessel 1, recorded 2026-11-18. Board 1 is in [board-1.md](board-1.md).
 | Item | Value |
 | --- | --- |
 | Board ID / USB serial | `TM-00-04-f000da30-0061473c-22102586` |
-| Firmware commit | `e59e352` (same as board 1) |
-| Runtime commit | `2396b5a` (same as board 1) |
+| Firmware commit | `3b8c922` (v0.2.0), flashed 2026-11-18 from [firmware/](../firmware/README.md). Was `e59e352` (v0.1.8, same as board 1) |
+| Runtime commit | `dd434be`. Was `2396b5a` |
 | Wi-Fi firmware | 1.26 |
 | CLI used | `tessel` 0.3.25 on Node 0.12.18 (see the README for setup) |
 
@@ -40,10 +40,11 @@ Find it again with `tessel list`, which prints the board ID. USB vendor and prod
 
 Same as board 1:
 
-- The npm module libraries crash on this firmware because bitwise operators compile to a missing `tointegervalue` call. Raw scripts that avoid `<<`, `>>`, `|`, `&` and `^` work.
+- **Firmware v0.2.0 fixed the bitwise-operator crash on this board (2026-11-18).** Before the flash, a script using `<<`, `>>`, `|`, `&` or `^` died with `attempt to call field 'tointegervalue' (a nil value)`. After it, a test script gave correct results for all five operators, and the `rf-nrf24` npm library (which uses bitwise operators) initialized on port A and emitted `ready`. Other libraries are untested on this board. `blink.js` still works.
+- The probe results in the tables above were taken on the old v0.1.8 firmware with raw scripts. They are still valid, but were not rerun after the flash.
 - Port C cannot do UART. Use A, B or D.
 - `tessel update` does not work (the build server is gone). Firmware was never changed.
-- Flashing an ATtiny module (ambient, IR) goes through library code that uses bitwise operators, so it would probably crash on this firmware too.
+- Flashing an ATtiny module (ambient, IR) goes through library code that uses bitwise operators. That code may now run on v0.2.0, so the IR library would flash the IR module on first use. Do not call `ir-attx4` unless you want that.
 - `process.sendfile` saves files only with `tessel run <file> -u <dir>`.
 
 ## Scripts used for this board

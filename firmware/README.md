@@ -27,7 +27,11 @@ The bootloader lives in separate flash and is not overwritten, so a bad firmware
 | Board | Firmware before | Firmware after |
 | --- | --- | --- |
 | Board 1 | `e59e352` (v0.1.8, 2014-07-19), runtime `2396b5a` | not changed |
-| Board 2 | `e59e352` (v0.1.8, 2014-07-19), runtime `2396b5a` | not changed |
+| Board 2 | `e59e352` (v0.1.8, 2014-07-19), runtime `2396b5a` | `3b8c922`, runtime `dd434be` (v0.2.0), flashed 2026-11-18 with `tessel update firmware/tessel-firmware-v0.2.0.bin`. Works normally |
 | Board 3 | `e59e352` (v0.1.8, 2014-07-19), runtime `2396b5a` | `3b8c922`, runtime `dd434be` (v0.2.0), flashed 2026-11-18 |
 
-Board 3 still could not hold a USB session after the flash, so it is unknown whether v0.2.0 fixes the crash in module libraries (bitwise operators compile to a `tointegervalue` call that the v0.1.8 runtime lacks).
+## Result: v0.2.0 fixes the module-library crash
+
+On board 2, before the flash, this script died with `attempt to call field 'tointegervalue' (a nil value)`; after the flash it ran and every result was correct (`0x1234 << 4` = 74560, `>> 4` = 291, `| 0x0F` = 4671, `& 0xFF` = 52, `^ 0xFFFF` = 60875). The v0.1.8 runtime lacks a function the compiler emits for bitwise operators. The `rf-nrf24` npm library, which uses them internally, then initialized on board 2 and emitted `ready`.
+
+Board 3 was flashed first but has a separate USB fault (see `boards/board-3.md`), so it could not confirm this. Board 1 still runs v0.1.8; flash it the same way if you want its camera and GPS libraries to work.
