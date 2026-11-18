@@ -21,8 +21,8 @@ Find it again with `tessel list`, which prints the board ID.
 | --- | --- | --- | --- |
 | A | Servo | PCA9685 at I2C `0x70` | Detected. Registers read their reset values (MODE1 `0x11`, MODE2 `0x04`, PRESCALE `0x1e`). Servo output not driven, no servo attached |
 | B | Camera | VC0706 (`VC0703 1.00`) | Working. 640x480 JPEG captured with `raw-camera-photo.js` |
-| C | Climate | Si7005 (ID `0x50`) | Working. 27.2 C, 27.4 %RH. Chip select `digital[0]` must be low |
-| D | GPS | A2235-H (SiRF binary, 115200 baud) | Chip alive and streaming. No fix in a 10 minute run: best 5 satellites with peak C/N0 23, 0 used |
+| C | GPS | A2235-H (SiRF binary at 115200 baud over the hardware UART; NMEA via the library's software UART) | Chip alive and streaming (raw test, on port D, v0.1.8). The `gps-a2235h` library now works here: it reports `ready` within 1 s on port C (v0.2.0). No fix in 5 minutes with the library, and none in a 10 minute raw run: best 5 satellites at peak C/N0 23, 0 used |
+| D | Climate | Si7005 (ID `0x50`) | Working on port C before the swap (raw: 27.2 C, 27.4 %RH; `climate-si7005` library on v0.2.0: 21.3 C, 37.6 %RH). Now on D, not retested there. Chip select `digital[0]` must be low |
 
 ## Known limits on this board
 
@@ -37,4 +37,4 @@ Find it again with `tessel list`, which prints the board ID.
 
 ## GPS library needs port C
 
-The `gps-a2235h` library uses the firmware's software UART, which on Tessel 1 exists only on **port C** (its own README says so). The GPS module is on port D here, so the library finds nothing and reports `Could not find GPS module`, even though the raw SiRF test proves the module is alive on D. To use the library, move the GPS module to port C (swap it with the climate module) and run it outdoors. The raw scripts (`raw-gps-test.js`, `raw-gps-monitor.js`) still work on D, because they use the hardware UART directly. The raw tests in the tables above were taken on v0.1.8 and not rerun after the flash.
+The `gps-a2235h` library uses the firmware's software UART, which on Tessel 1 exists only on **port C** (its own README says so). With the GPS on port D the library reported `Could not find GPS module` even though the raw SiRF test proved the module alive. After swapping the GPS and climate modules (GPS now on C), the library reported `ready` within 1 second. A 5 minute run printed no `coordinates`, `altitude` or `fix` events, so there was no position fix: the antenna needs a clear view of the sky, and in every run so far (raw 10 minute run, library 5 minute run) it saw at most 5 satellites at weak signal. The raw scripts (`raw-gps-test.js`, `raw-gps-monitor.js`) use the hardware UART and work on port D, not C.
