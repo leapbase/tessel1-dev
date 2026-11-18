@@ -22,7 +22,7 @@ Find it again with `tessel list`, which prints the board ID.
 | A | Servo | PCA9685 at I2C `0x70` | Detected. Registers read their reset values (MODE1 `0x11`, MODE2 `0x04`, PRESCALE `0x1e`). Servo output not driven, no servo attached |
 | B | Camera | VC0706 (`VC0703 1.00`) | Working. 640x480 JPEG captured with `raw-camera-photo.js` |
 | C | GPS | A2235-H (SiRF binary at 115200 baud over the hardware UART; NMEA via the library's software UART) | Chip alive and streaming (raw test, on port D, v0.1.8). The `gps-a2235h` library now works here: it reports `ready` within 1 s on port C (v0.2.0). No fix in 5 minutes with the library, and none in a 10 minute raw run: best 5 satellites at peak C/N0 23, 0 used |
-| D | Climate | Si7005 (ID `0x50`) | Working on port C before the swap (raw: 27.2 C, 27.4 %RH; `climate-si7005` library on v0.2.0: 21.3 C, 37.6 %RH). Now on D, not retested there. Chip select `digital[0]` must be low |
+| D | Climate | Si7005 (ID `0x50`) | Working on port C before the swap (raw: 27.2 C, 27.4 %RH; `climate-si7005` library on v0.2.0: 21.3 C, 37.6 %RH). Retested on port D (v0.2.0, `raw-climate-test.js`): ID `0x50`, 24.3 C, 32.9 %RH. Chip select `digital[0]` must be low |
 
 ## Known limits on this board
 

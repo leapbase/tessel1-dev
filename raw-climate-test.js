@@ -2,7 +2,7 @@
 // The chip ignores I2C until its active-low chip-select (digital[0] on the module) is pulled low.
 // Reads the ID register, then one temperature and one humidity measurement.
 var tessel = require('tessel');
-var PORT = 'C';
+var PORT = 'D';
 var ADDR = 0x40;
 function say(m) { console.log('climate: ' + m); }
 function hex2(n) { return (n < 16 ? '0' : '') + n.toString(16); }
