@@ -19,9 +19,15 @@ Find it again with `tessel list`, which prints the board ID. USB vendor and prod
 | Port | Module | Chip | Status |
 | --- | --- | --- | --- |
 | A | RF | nRF24L01 | Working. 9 of 9 registers read their power-on defaults, a write and readback of the RF channel register works. `RF_SETUP` reads `0x0f`, the default of the original nRF24L01 (the L01+ defaults to `0x0e`). Radio never transmitted, CE held low |
-| B | Climate | Si7005 (ID `0x50`) | Working. 24.1 C, 32.6 %RH. Also tested working on port A. Chip select `digital[0]` must be low |
-| C | SD card | SD card on SPI | Working. Card answers CMD0 with `0x01` and CMD8 with `01 AA`: an SD v2 card at 3.3 V. Chip select is pin `G1` driven by hand |
+| B | Relay | Two relays, plain GPIO (channel 1 = `digital[0]`, channel 2 = `digital[1]`) | Working. Verified by ear on 2026-11-18: `raw-relay-test.js` pulsed channel 1 three times, then channel 2 three times, and clicks were heard. Both channels left off. There is no chip to identify, so a software read-back alone proves nothing |
+| C | SD card | SD card on SPI | **Card does not finish initializing.** Answers CMD0 (`0x01`) and CMD8 (echo `01 AA`, SD v2, 3.3 V), but ACMD41 stays "idle" for 25 s with HCS set or clear, and the OCR power-up-complete bit stays 0. Cannot read or list files. Cause unknown: card, power or contact. Chip select is pin `G1` driven by hand |
 | D | IR | ATtiny84-based | Chip responds on SPI, but reports firmware version `0x01` (library expects `0x04`) and module ID `0x00` (should be `0x0B`). **Not flashed.** The IR library would flash it on first use |
+
+## Moved to another board
+
+| Module | Note |
+| --- | --- |
+| Climate (Si7005) | Was on this board and tested working on ports A and B (ID `0x50`, about 24 C, 32 %RH). Moved to board 1, so it is no longer on this board |
 
 ## Modules tried and not working
 
@@ -42,4 +48,4 @@ Same as board 1:
 
 ## Scripts used for this board
 
-`raw-board-scan.js` (per-port identify: I2C, climate, GPS, camera), `raw-climate-test.js`, `raw-sd-test.js`, `raw-nrf24-test.js`, `raw-attiny-test.js` (read-only identity check for ambient and IR), `raw-ambient-test.js`, `raw-accel-sd-test.js`, `raw-i2c-scan.js`. Port letters and the module settings at the top of each script match the table above, so edit them if a module sits elsewhere.
+`raw-board-scan.js` (per-port identify: I2C, climate, GPS, camera), `raw-climate-test.js`, `raw-sd-test.js`, `raw-nrf24-test.js`, `raw-attiny-test.js` (read-only identity check for ambient and IR), `raw-ambient-test.js`, `raw-accel-sd-test.js`, `raw-i2c-scan.js`, `raw-relay-test.js` (switches real loads, use with care), `raw-sd-ls.js` (root-folder listing; blocked at card start-up on this card, untested past that point). Port letters and the module settings at the top of each script match the table above, so edit them if a module sits elsewhere.
