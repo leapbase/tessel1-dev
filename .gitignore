@@ -1,0 +1,10 @@
+node_modules/
+npm-debug.log
+.remember/
+
+# photos taken by the camera tests (may show surroundings)
+camera-photo.jpg
+camera-test.jpg
+*.jpg
+.tmp-*.js
+.DS_Store

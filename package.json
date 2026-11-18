@@ -1,0 +1,9 @@
+{
+  "name": "tessel-project",
+  "version": "0.0.1",
+  "private": true,
+  "dependencies": {
+    "camera-vc0706": "^0.1.8",
+    "gps-a2235h": "^0.3.1"
+  }
+}
