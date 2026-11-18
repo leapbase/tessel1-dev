@@ -114,6 +114,13 @@ A GPS module and a camera module are plugged into the board.
 | Camera (VC0706) | **B** | Working. Replied `76 00 11 00 0b` + `VC0703 1.00` to the get-version command | Crashes |
 | GPS (A2235-H) | **D** | Working. 73 valid SiRF binary frames in 8 s; 2 satellites seen, best C/N0 13, no fix yet (indoors) | Crashes |
 
+| Servo (PCA9685) | **A** | Detected over I2C at `0x70` (the chip's all-call address). MODE1 `0x11`, MODE2 `0x04`, PRESCALE `0x1e` are the chip's exact reset values. Servo output not driven (no servo attached to test) | Not tested |
+| Climate (Si7005) | **C** | Working. ID register `0x11` = `0x50`; read 27.2 C and 27.4 %RH on 2026-11-18 | Not tested (expected to crash, uses bitwise operators) |
+
+Climate module note: the Si7005 ignores I2C until its active-low chip select (`digital[0]` on the module) is driven low. A plain I2C scan finds nothing without it, which is why an earlier scan of port C showed no devices. `raw-climate-test.js` drives the pin low, then reads the ID, one temperature and one humidity measurement. The humidity figure uses the datasheet's linearization but no temperature compensation, so treat it as approximate.
+
+Scripts for these modules: `raw-i2c-scan.js` (I2C address scan for given ports), `raw-i2c-modules-test.js` (read-only servo register check) and `raw-climate-test.js`.
+
 Port C is not usable for UART on this firmware (`Software UART not yet functional for this port. You must use module port A, B, or D.`).
 
 **Raw hardware tests (these work).** They use no module library: `raw-camera-test.js` (set `PORT` at the top; B for this camera) and `raw-gps-test.js` (port D, decodes the module's SiRF binary stream).
