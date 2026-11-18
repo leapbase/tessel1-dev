@@ -5,7 +5,7 @@ The board connected to this machine is a **Tessel 1**. Tessel 2 notes are kept a
 
 ## Boards
 
-Each board has its own record in `boards/`: its ID, firmware, which module sits in which port, and test results. Currently: [boards/board-1.md](boards/board-1.md) (servo, camera, climate, GPS) and [boards/board-2.md](boards/board-2.md) (nRF24 radio, climate, SD card, IR). Tell boards apart by the ID that `tessel list` prints. The sections below describe board 1 unless they say otherwise. Port letters in the test scripts match board 1, so change them for a board with a different layout.
+Each board has its own record in `boards/`: its ID, firmware, which module sits in which port, and test results. Currently: [boards/board-1.md](boards/board-1.md) (servo, camera, climate, GPS) and [boards/board-2.md](boards/board-2.md) (nRF24 radio, climate, SD card, IR). [boards/board-3.md](boards/board-3.md) (faulty USB link, firmware v0.2.0 flashed, no module could be tested). Tell boards apart by the ID that `tessel list` prints. Firmware: `firmware/` holds the Tessel 1 v0.2.0 binary and how to flash it from a local file, since the update server (`builds.tessel.io`) is gone. Boards 1 and 2 still run v0.1.8. The sections below describe board 1 unless they say otherwise. Port letters in the test scripts match board 1, so change them for a board with a different layout.
 
 ## Connected board (board 1)
 
