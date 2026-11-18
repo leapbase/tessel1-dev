@@ -5,7 +5,7 @@ The board connected to this machine is a **Tessel 1**. Tessel 2 notes are kept a
 
 ## Boards
 
-Each board has its own record in `boards/`: its ID, firmware, which module sits in which port, and test results. Currently: [boards/board-1.md](boards/board-1.md). The sections below describe board 1 unless they say otherwise. Port letters in the test scripts match board 1, so change them for a board with a different layout.
+Each board has its own record in `boards/`: its ID, firmware, which module sits in which port, and test results. Currently: [boards/board-1.md](boards/board-1.md) (servo, camera, climate, GPS) and [boards/board-2.md](boards/board-2.md) (nRF24 radio, climate, SD card, IR). Tell boards apart by the ID that `tessel list` prints. The sections below describe board 1 unless they say otherwise. Port letters in the test scripts match board 1, so change them for a board with a different layout.
 
 ## Connected board (board 1)
 
