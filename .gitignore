@@ -8,3 +8,6 @@ camera-test.jpg
 *.jpg
 .tmp-*.js
 .DS_Store
+
+# raw sector backups taken before SD writes (contain card data)
+backups/
