@@ -31,9 +31,13 @@ function make(imagePath, opts) {
   };
   return { dev: dev, deps: deps, calls: calls, notes: notes };
 }
+// The logger keeps everything in the "tessel-log" folder: tests open that folder (creating it if the test runs first).
 function mountImg(imagePath, cb) {
   var dev = memdev.open(imagePath);
-  fat32.mount(dev, function (e, vol) { assert.ifError(e); cb(vol, dev); });
+  fat32.mount(dev, function (e, root) {
+    assert.ifError(e);
+    root.ensureDir('tessel-log', function (e2, dir) { assert.ifError(e2); cb(dir, dev); });
+  });
 }
 function readFile(vol, name, cb) {
   vol.find(name, function (e, ent) { assert.ifError(e); if (!ent) return cb(null); vol.readAll(ent, function (e2, b) { assert.ifError(e2); cb(b); }); });
@@ -270,6 +274,29 @@ test('a DATA.CSV whose size exceeds its cluster chain is left untouched (no bloc
                   readFile(v2, 'DATA2.CSV', function (b) { assert.ok(b && lines(b)[0] === 'time,temp_c,humidity,lat,lon,alt_m,sats,note' && /,,,,,,,boot$/.test(lines(b)[1])); done(); });
                 });
               });
+            });
+          });
+        });
+      });
+    });
+  });
+});
+
+test('everything the logger writes lives in the tessel-log folder; the root only holds the folder', function (done) {
+  var path = img.fresh(), m = make(path, { gps: { fix: false } }), a = app.create(m.deps);
+  a.boot(false, function (e) {
+    assert.ifError(e);
+    a.cycle(5, function () {
+      var dev = memdev.open(path);
+      fat32.mount(dev, function (me, root) {
+        assert.ifError(me);
+        root.find('DATA.CSV', function (e1, inRoot) {
+          assert.strictEqual(inRoot, null, 'no DATA.CSV in the root');
+          root.highestImageNumber(function (e2, n) {
+            assert.strictEqual(n, 0, 'no photos in the root');
+            root.findDir('tessel-log', function (e3, dir) {
+              assert.ifError(e3); assert.ok(dir, 'the folder exists');
+              dev.close(); img.fsckClean(path); done();
             });
           });
         });

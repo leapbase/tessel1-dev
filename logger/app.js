@@ -1,5 +1,5 @@
 // Logger logic with its hardware injected, so it runs against a FAT32 image on the Mac and against the board alike.
-// One DATA.CSV row per minute carries temperature, humidity and the GPS state together; a photo follows every 5th minute.
+// Files live in the tessel-log folder. One DATA.CSV row per minute carries temperature, humidity and the GPS state together; a photo follows every 5th minute.
 // create(deps) -> app with app.ready, app.boot(recovering, cb(err)), app.cycle(minute, cb()). cycle never reports errors:
 // it logs them, blinks, and clears app.ready so the caller re-boots (re-mounts) before the next cycle.
 // deps: openCard(cb(err, dev)), mount(dev, cb(err, vol)), climateRead(cb(err, {tempC, humidity})),
@@ -10,6 +10,8 @@ var clock = require('./clock');
 var rows = require('./rows');
 
 var CARD_ERRORS = ['IO', 'NO_CARD', 'INIT', 'NOT_FAT32'];     // the card or filesystem is unusable; anything else is a per-file problem
+
+var LOG_DIR = 'tessel-log';
 
 function pad4(n) { return ('000' + n).slice(-4); }
 
@@ -55,12 +57,15 @@ exports.create = function (deps) {
     function bad(e) { cardFailed(e); cb(e); }
     deps.openCard(function (e, dev) {
       if (e) return bad(e);
-      deps.mount(dev, function (e2, v) {
+      deps.mount(dev, function (e2, rootVol) {
         if (e2) return bad(e2);
-        vol = v;
-        openLog('DATA.CSV', rows.header(), function (e3, entry) {
-          if (e3 && e3.code === 'DAMAGED') return openLog('DATA2.CSV', rows.header(), gotLog);
-          gotLog(e3, entry);
+        rootVol.ensureDir(LOG_DIR, function (e2b, dir) {          // everything the logger writes goes in this folder
+          if (e2b) return bad(e2b);
+          vol = dir;
+          openLog('DATA.CSV', rows.header(), function (e3, entry) {
+            if (e3 && e3.code === 'DAMAGED') return openLog('DATA2.CSV', rows.header(), gotLog);
+            gotLog(e3, entry);
+          });
         });
         function gotLog(le, entry) {
           if (le) return bad(le);

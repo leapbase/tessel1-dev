@@ -370,6 +370,121 @@ test('a FAT sector with impossible entries is never written back (DAMAGED, zero 
   });
 });
 
+// Folder support: the logger keeps its files in a folder called "tessel-log" (a long name, so it needs a long-filename entry).
+test('ensureDir creates "tessel-log"; macOS lists it, reads a file inside it, fsck is clean, nothing leaks into the root', function (done) {
+  var img = copyImage(), dev = memdev.open(img), data = pattern(1800, 6);
+  mountVol(dev, function (vol) {
+    vol.ensureDir('tessel-log', function (e, dir) {
+      assert.ifError(e);
+      dir.create('DATA.CSV', function (ce, entry) {
+        assert.ifError(ce);
+        dir.append(entry, data, function (ae) {
+          assert.ifError(ae);
+          vol.find('DATA.CSV', function (fe, inRoot) {
+            assert.ifError(fe); assert.strictEqual(inRoot, null, 'DATA.CSV is not in the root');
+            dev.close(); fsckClean(img);
+            var a = attach(img, false);
+            try {
+              assert.ok(fs.readdirSync(a.mount).indexOf('tessel-log') >= 0, 'macOS shows the folder name: ' + fs.readdirSync(a.mount));
+              assert.ok(fs.statSync(path.join(a.mount, 'tessel-log')).isDirectory());
+              assert.ok(fs.readFileSync(path.join(a.mount, 'tessel-log', 'DATA.CSV')).equals(data));
+            } finally { detach(a); }
+            done();
+          });
+        });
+      });
+    });
+  });
+});
+
+test('ensureDir on a new mount finds the same folder (no duplicate) and its files', function (done) {
+  var img = copyImage(), dev = memdev.open(img);
+  mountVol(dev, function (vol) {
+    vol.ensureDir('tessel-log', function (e, dir) {
+      assert.ifError(e);
+      dir.create('IMG0003.JPG', function (ce) {
+        assert.ifError(ce);
+        mountVol(dev, function (vol2) {
+          vol2.ensureDir('tessel-log', function (e2, dir2) {
+            assert.ifError(e2);
+            dir2.highestImageNumber(function (he, n) {
+              assert.ifError(he); assert.strictEqual(n, 3);
+              vol2.highestImageNumber(function (he2, n2) { assert.strictEqual(n2, 0, 'the root has no images');
+                dev.close(); fsckClean(img);
+                var a = attach(img, false);
+                try { assert.strictEqual(fs.readdirSync(a.mount).filter(function (x) { return x === 'tessel-log'; }).length, 1); } finally { detach(a); }
+                done();
+              });
+            });
+          });
+        });
+      });
+    });
+  });
+});
+
+test('ensureDir uses a "tessel-log" folder that macOS made, keeps its files, and new files appear alongside', function (done) {
+  var img = copyImage();
+  var a = attach(img, false);
+  fs.mkdirSync(path.join(a.mount, 'tessel-log'));
+  fs.writeFileSync(path.join(a.mount, 'tessel-log', 'OLD.TXT'), 'keep me\n');
+  detach(a);
+  var dev = memdev.open(img);
+  mountVol(dev, function (vol) {
+    vol.ensureDir('tessel-log', function (e, dir) {
+      assert.ifError(e);
+      dir.find('OLD.TXT', function (fe, old) {
+        assert.ifError(fe); assert.ok(old, 'the existing file is visible through the folder');
+        dir.create('DATA.CSV', function (ce, entry) {
+          assert.ifError(ce);
+          dir.append(entry, new Buffer('x,y\r\n'), function (ae) {
+            assert.ifError(ae); dev.close(); fsckClean(img);
+            var b = attach(img, false);
+            try {
+              assert.strictEqual(fs.readFileSync(path.join(b.mount, 'tessel-log', 'OLD.TXT')).toString(), 'keep me\n');
+              assert.strictEqual(fs.readFileSync(path.join(b.mount, 'tessel-log', 'DATA.CSV')).toString(), 'x,y\r\n');
+            } finally { detach(b); }
+            done();
+          });
+        });
+      });
+    });
+  });
+});
+
+test('real card geometry (64 sectors per cluster): folder, log and a 49 KB photo, fsck clean, macOS reads them back', function (done) {
+  var big = path.join(WORK, 'spc64.img');
+  cp.execFileSync(path.join(__dirname, 'make-image.sh'), [big, '64', '2200']);   // 2.2 GB sparse: FAT32 needs 65525 clusters
+  var dev = memdev.open(big), photo = pattern(49000, 8);
+  mountVol(dev, function (vol) {
+    vol.ensureDir('tessel-log', function (e, dir) {
+      assert.ifError(e);
+      dir.create('DATA.CSV', function (ce, log) {
+        assert.ifError(ce);
+        (function rows(i, ent) {
+          if (i === 60) {
+            return dir.create('IMG0001.JPG', function (pe, pic) {
+              assert.ifError(pe);
+              dir.append(pic, photo, function (ae) {
+                assert.ifError(ae);
+                dev.close(); fsckClean(big);
+                var a = attach(big, false);
+                try {
+                  var csv = fs.readFileSync(path.join(a.mount, 'tessel-log', 'DATA.CSV')).toString();
+                  assert.strictEqual(csv.split('\r\n').length - 1, 60);
+                  assert.ok(fs.readFileSync(path.join(a.mount, 'tessel-log', 'IMG0001.JPG')).equals(photo));
+                } finally { detach(a); }
+                done();
+              });
+            });
+          }
+          dir.append(ent, new Buffer('2026-11-19 00:00:00,21.3,40.1,,,,,\r\n'), function (re, e2) { assert.ifError(re); rows(i + 1, e2); });
+        })(0, log);
+      });
+    });
+  });
+});
+
 test('a failed write surfaces an IO error instead of hanging', function (done) {
   var img = copyImage(), dev = memdev.open(img);
   mountVol(dev, function (vol) {

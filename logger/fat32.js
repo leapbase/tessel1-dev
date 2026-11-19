@@ -35,6 +35,35 @@ function imageNumber(name) {
   return Number(digits);
 }
 
+// ---- long file names (one entry, up to 13 characters: enough for the "tessel-log" folder) ----
+var LFN_POS = [1, 3, 5, 7, 9, 14, 16, 18, 20, 22, 24, 28, 30];     // byte offsets of the 13 UCS-2 characters in an LFN entry
+// Checksum of the 11-byte short name, rotate-right-and-add with arithmetic only.
+function lfnChecksum(s11) {
+  var sum = 0;
+  for (var i = 0; i < 11; i++) sum = ((sum % 2) * 128 + Math.floor(sum / 2) + s11.charCodeAt(i)) % 256;
+  return sum;
+}
+function lfnWrite(b, o, longName, s11) {
+  for (var i = 0; i < 32; i++) b[o + i] = 0;
+  b[o] = 0x41;                                                     // last (and only) entry of the sequence, number 1
+  b[o + 11] = 0x0F;                                                // attribute: long-name entry
+  b[o + 13] = lfnChecksum(s11);
+  for (var k = 0; k < 13; k++) {
+    var c = k < longName.length ? longName.charCodeAt(k) : (k === longName.length ? 0 : 0xFFFF);
+    b[o + LFN_POS[k]] = c % 256; b[o + LFN_POS[k] + 1] = Math.floor(c / 256);
+  }
+}
+function lfnRead(b, o) {
+  var s = '';
+  for (var k = 0; k < 13; k++) {
+    var c = b[o + LFN_POS[k]] + b[o + LFN_POS[k] + 1] * 256;
+    if (c === 0 || c === 0xFFFF) break;
+    s += String.fromCharCode(c);
+  }
+  return s;
+}
+function isSingleLfn(b, o) { return b[o + 11] === 0x0F && b[o] === 0x41; }
+
 exports.mount = function (dev, cb) {
   dev.read(0, function (e, b0) {
     if (e) return cb(ioErr(e));
@@ -138,12 +167,13 @@ function makeVolume(dev, g) {
     })(start);
   }
 
-  // Visit root directory entries. visit(info) with info = {free, end, raw, lba, off}; return true to stop.
-  function scanRoot(visit, cb) {
+  // Visit the entries of the directory whose cluster chain starts at startCl. visit(info) with
+  // info = {free, end, raw, lba, off}; return true to stop. The scan ends at the first end-of-directory entry.
+  function scanDir(startCl, visit, cb) {
     var hops = 0;
     (function cluster(c) {
       if (c < 2 || c >= 0x0FFFFFF8) return cb(null, false);
-      if (!validCluster(c) || ++hops > g.nClusters) return cb(err('NOT_FAT32', 'root directory chain is damaged'));
+      if (!validCluster(c) || ++hops > g.nClusters) return cb(err('NOT_FAT32', 'directory chain is damaged'));
       (function sec(s) {
         if (s === g.spc) { return getFat(c, function (e, next) { if (e) return cb(e); cluster(next); }); }
         var lba = clusterLba(c) + s;
@@ -158,7 +188,7 @@ function makeVolume(dev, g) {
           sec(s + 1);
         });
       })(0);
-    })(g.rootCl);
+    })(startCl);
   }
 
   function entryOf(info) {
@@ -170,49 +200,159 @@ function makeVolume(dev, g) {
   }
   // A plain file entry: not free, and neither volume-label (0x08, also set on LFN entries) nor directory (0x10) bit.
   function isFile(info) { var a = info.raw[info.off + 11]; return !info.free && Math.floor(a / 8) % 2 === 0 && Math.floor(a / 16) % 2 === 0; }
+  function isDir(info) { var a = info.raw[info.off + 11]; return !info.free && Math.floor(a / 8) % 2 === 0 && Math.floor(a / 16) % 2 === 1; }
+  function short11(info) { return info.raw.slice(info.off, info.off + 11).toString('binary'); }
 
-  vol.find = function (name, cb) {
-    var want = name11(name), found = null;
-    if (!want) return cb(err('NOT_FAT32', 'name not 8.3: ' + name));
-    scanRoot(function (info) {
-      if (info.free || !isFile(info)) return false;
-      if (info.raw.slice(info.off, info.off + 11).toString('binary') === want) { found = entryOf(info); return true; }
-      return false;
-    }, function (e) { cb(e, e ? null : found); });
-  };
-
-  vol.highestImageNumber = function (cb) {
-    var best = 0;
-    scanRoot(function (info) {
-      if (info.free || !isFile(info)) return false;
-      var n = imageNumber(showName(info.raw, info.off));
-      if (n > best) best = n;
-      return false;
-    }, function (e) { cb(e, e ? 0 : best); });
-  };
-
-  vol.create = function (name, cb) {
-    var want = name11(name), slot = null, exists = false;
-    if (!want) return cb(err('NOT_FAT32', 'name not 8.3: ' + name));
-    scanRoot(function (info) {
-      if (info.free) { if (!slot) slot = info; return info.end; }
-      if (isFile(info) && info.raw.slice(info.off, info.off + 11).toString('binary') === want) { exists = true; return true; }
+  // Create the entries `count` consecutive free slots long (the long-name entry plus the short entry, or just the short entry)
+  // in one sector of directory startCl. fill(buf, off) writes the entries; calls back with {lba, off, raw}.
+  function placeEntries(startCl, need, probe, fill, cb) {
+    var run = null, slot = null, dup = false;
+    scanDir(startCl, function (info) {
+      if (info.free) {
+        if (!run || run.lba !== info.lba || run.next !== info.off) run = { first: info, lba: info.lba, next: info.off, count: 0 };
+        run.count++; run.next = info.off + 32;
+        var have = info.end ? run.count - 1 + (512 - info.off) / 32 : run.count;   // after the end marker every slot is free
+        if (have >= need) { slot = run.first; return true; }
+        return info.end;
+      }
+      run = null;
+      if (probe(info)) { dup = true; return true; }
       return false;
     }, function (e) {
       if (e) return cb(e);
-      if (exists) return cb(err('EXISTS', name + ' exists'));
-      if (!slot) return cb(err('DIR_FULL', 'no free root directory slot'));
-      var b = slot.raw, o = slot.off;
-      for (var i = 0; i < 32; i++) b[o + i] = 0;
-      b.write(want, o, 11, 'binary');
-      b[o + 11] = 0x20;                                            // archive
-      put16(b, o + 16, 0x21); put16(b, o + 18, 0x21); put16(b, o + 24, 0x21);   // dates 1980-01-01
-      dev.write(slot.lba, b, function (we) {
-        if (we) return cb(ioErr(we));
-        cb(null, { name: showName(b, o), size: 0, firstCluster: 0, dirLba: slot.lba, dirOffset: o });
-      });
+      if (dup) return cb(err('EXISTS', 'name exists'));
+      if (!slot) return cb(err('DIR_FULL', 'no free directory slot'));
+      fill(slot.raw, slot.off);
+      dev.write(slot.lba, slot.raw, function (we) { if (we) return cb(ioErr(we)); cb(null, { lba: slot.lba, off: slot.off, raw: slot.raw }); });
     });
-  };
+  }
+
+  function dirOps(startCl, parentCl) {
+    var ops = {};
+
+    ops.find = function (name, cb) {
+      var want = name11(name), found = null;
+      if (!want) return cb(err('NOT_FAT32', 'name not 8.3: ' + name));
+      scanDir(startCl, function (info) {
+        if (!isFile(info)) return false;
+        if (short11(info) === want) { found = entryOf(info); return true; }
+        return false;
+      }, function (e) { cb(e, e ? null : found); });
+    };
+
+    ops.highestImageNumber = function (cb) {
+      var best = 0;
+      scanDir(startCl, function (info) {
+        if (!isFile(info)) return false;
+        var n = imageNumber(showName(info.raw, info.off));
+        if (n > best) best = n;
+        return false;
+      }, function (e) { cb(e, e ? 0 : best); });
+    };
+
+    ops.create = function (name, cb) {
+      var want = name11(name);
+      if (!want) return cb(err('NOT_FAT32', 'name not 8.3: ' + name));
+      placeEntries(startCl, 1, function (info) { return isFile(info) && short11(info) === want; }, function (b, o) {
+        for (var i = 0; i < 32; i++) b[o + i] = 0;
+        b.write(want, o, 11, 'binary');
+        b[o + 11] = 0x20;                                          // archive
+        put16(b, o + 16, 0x21); put16(b, o + 18, 0x21); put16(b, o + 24, 0x21);   // dates 1980-01-01
+      }, function (e, at) {
+        if (e) return cb(e);
+        cb(null, { name: showName(at.raw, at.off), size: 0, firstCluster: 0, dirLba: at.lba, dirOffset: at.off });
+      });
+    };
+
+    // Find a sub-directory by its long name (case-insensitive): a single long-name entry directly followed by its short entry.
+    ops.findDir = function (longName, cb) {
+      var want = longName.toLowerCase(), pending = null, found = null;
+      scanDir(startCl, function (info) {
+        if (info.free) { pending = null; return false; }
+        if (isSingleLfn(info.raw, info.off)) { pending = lfnRead(info.raw, info.off).toLowerCase(); return false; }
+        var match = isDir(info) && pending === want;
+        pending = null;
+        if (match) { found = entryOf(info); return true; }
+        return false;
+      }, function (e) { cb(e, e ? null : found); });
+    };
+
+    // Open the sub-directory `longName`, creating it if it does not exist. Calls back with a volume view whose
+    // find/create/highestImageNumber/findDir/ensureDir work inside that directory.
+    ops.ensureDir = function (longName, cb) {
+      if (longName.length > 13) return cb(err('NOT_FAT32', 'long name too long'));
+      ops.findDir(longName, function (e, found) {
+        if (e) return cb(e);
+        if (found) return cb(null, view(found.firstCluster, startCl === g.rootCl ? 0 : startCl));
+        makeDir(longName, function (me, newCl) { cb(me, me ? null : view(newCl, startCl === g.rootCl ? 0 : startCl)); });
+      });
+
+      function makeDir(name, done) {
+        // 1. pick a free short alias like TESSEL~1
+        var base = '', i, used = {};
+        for (i = 0; i < name.length && base.length < 6; i++) {
+          var ch = name.charAt(i).toUpperCase();
+          if ((ch >= 'A' && ch <= 'Z') || (ch >= '0' && ch <= '9')) base += ch;
+        }
+        if (!base) base = 'DIR';
+        scanDir(startCl, function (info) { if (!info.free) used[short11(info)] = true; return false; }, function (se) {
+          if (se) return done(se);
+          var alias = null, n;
+          for (n = 1; n <= 9 && !alias; n++) {
+            var cand = (base + '~' + n + '        ').slice(0, 8) + '   ';
+            if (!used[cand]) alias = cand;
+          }
+          if (!alias) return done(err('DIR_FULL', 'no free short alias'));
+          // 2. allocate the directory's cluster and write it complete ('.' and '..', the rest zero) BEFORE linking it in
+          allocCluster(function (ae, c) {
+            if (ae) return done(ae);
+            var first = new Buffer(512), k;
+            for (k = 0; k < 512; k++) first[k] = 0;
+            first.write('.          ', 0, 11, 'binary'); first[11] = 0x10;
+            put16(first, 20, Math.floor(c / 65536)); put16(first, 26, c % 65536);
+            put16(first, 16, 0x21); put16(first, 18, 0x21); put16(first, 24, 0x21);
+            first.write('..         ', 32, 11, 'binary'); first[32 + 11] = 0x10;
+            put16(first, 32 + 20, Math.floor((startCl === g.rootCl ? 0 : startCl) / 65536)); put16(first, 32 + 26, (startCl === g.rootCl ? 0 : startCl) % 65536);
+            put16(first, 32 + 16, 0x21); put16(first, 32 + 18, 0x21); put16(first, 32 + 24, 0x21);
+            var zero = new Buffer(512); for (k = 0; k < 512; k++) zero[k] = 0;
+            (function wr(s) {
+              if (s === g.spc) return link();
+              dev.write(clusterLba(c) + s, s === 0 ? first : zero, function (we) { if (we) return done(ioErr(we)); wr(s + 1); });
+            })(0);
+            // 3. link it into the parent: long-name entry + short entry in consecutive slots of one sector
+            function link() {
+              placeEntries(startCl, 2, function () { return false; }, function (b, o) {
+                lfnWrite(b, o, name, alias);
+                var so = o + 32;
+                for (var j = 0; j < 32; j++) b[so + j] = 0;
+                b.write(alias, so, 11, 'binary');
+                b[so + 11] = 0x10;                                 // directory
+                put16(b, so + 16, 0x21); put16(b, so + 18, 0x21); put16(b, so + 24, 0x21);
+                put16(b, so + 20, Math.floor(c / 65536)); put16(b, so + 26, c % 65536);
+              }, function (pe) {
+                if (pe) return done(pe);
+                writeFsInfo(function (fe) { done(fe || null, c); });
+              });
+            }
+          });
+        });
+      }
+    };
+
+    return ops;
+  }
+
+  // A volume view: the shared file operations (append, stream, remove, read, chain check) plus directory operations bound to
+  // the directory that starts at cluster startCl.
+  function view(startCl, parentCl) {
+    var v = {}, k, ops = dirOps(startCl, parentCl);
+    for (k in vol) if (vol.hasOwnProperty(k)) v[k] = vol[k];
+    v.find = ops.find; v.create = ops.create; v.highestImageNumber = ops.highestImageNumber; v.findDir = ops.findDir; v.ensureDir = ops.ensureDir;
+    return v;
+  }
+  var rootOps = dirOps(g.rootCl, 0);
+  vol.find = rootOps.find; vol.create = rootOps.create; vol.highestImageNumber = rootOps.highestImageNumber;
+  vol.findDir = rootOps.findDir; vol.ensureDir = rootOps.ensureDir;
 
   function writeFsInfo(cb) {
     if (!g.fsinfo || allocated === 0) return cb(null);
