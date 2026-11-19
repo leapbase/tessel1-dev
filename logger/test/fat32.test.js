@@ -340,6 +340,36 @@ test('remove of an empty file (no clusters) just deletes the directory entry', f
   });
 });
 
+// Root-cause safety net (2026-11-19 incident): a cached FAT sector can turn into garbage on the board. The writer must never
+// write a FAT sector back to the card if it holds impossible entries; refuse with DAMAGED and write nothing.
+test('a FAT sector with impossible entries is never written back (DAMAGED, zero writes)', function (done) {
+  var img = copyImage(), dev = memdev.open(img);
+  mountVol(dev, function (vol) {
+    dev.read(memdev.PART_START, function (e0, bs) {
+    assert.ifError(e0);
+    var fatLba = memdev.PART_START + bs[14] + bs[15] * 256;      // FAT 1 starts after the reserved sectors
+    dev.read(fatLba, function (e, b) {
+      assert.ifError(e);
+      assert.ok(b[0] >= 0xF0 && b[3] === 0x0F, 'this is the first FAT sector (media descriptor entry)');
+      b[16] = 0x10; b[17] = 0x16; b[18] = 0x02; b[19] = 0x08;   // entry 4 = 0x08021610: far beyond any cluster, like the garbage seen on the card
+      dev.write(fatLba, b, function (we) {
+        assert.ifError(we);
+        mountVol(dev, function (vol2) {                         // fresh mount: no cached sector
+          vol2.create('LOG.CSV', function (ce, entry) {
+            assert.ifError(ce);
+            var before = dev.writes;
+            vol2.append(entry, new Buffer('x\r\n'), function (er) {
+              assert.ok(er); assert.strictEqual(er.code, 'DAMAGED'); assert.strictEqual(dev.writes, before, 'no block may be written');
+              dev.close(); done();
+            });
+          });
+        });
+      });
+    });
+    });
+  });
+});
+
 test('a failed write surfaces an IO error instead of hanging', function (done) {
   var img = copyImage(), dev = memdev.open(img);
   mountVol(dev, function (vol) {

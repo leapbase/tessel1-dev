@@ -98,7 +98,11 @@ exports.open = function (port, cb) {
           return xfer(ffBuf(600), function () { csn.output(true); done(err('IO', 'no data token for block ' + lba)); });
         }
         csn.output(true);
-        done(null, rx.slice(token + 1, token + 513));
+        // A PRIVATE copy: rx.slice() is a view of the transfer buffer, which the runtime reclaims and reuses. The fat32 writer
+        // caches FAT sectors for minutes, and a cached view turned into garbage that was written back over both FATs.
+        var block = new Buffer(512);
+        rx.copy(block, 0, token + 1, token + 513);
+        done(null, block);
       });
     });
   }

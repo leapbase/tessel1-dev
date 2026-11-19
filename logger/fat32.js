@@ -75,11 +75,23 @@ function makeVolume(dev, g) {
     if (!validCluster(c)) return cb(err('DAMAGED', 'cluster ' + c + ' is outside the volume'));
     readFatSector(g.fat1 + Math.floor(c * 4 / 512), function (e, b) { cb(e, e ? 0 : le32(b, (c * 4) % 512) % TOP); });
   }
+  // A FAT sector is only ever written back if every entry is plausible: free, a cluster inside the volume, or an end/bad/media
+  // marker (>= 0x0FFFFFF0). Sector 0 must also start with the two media/end-of-chain entries. This is the last line of defence
+  // against writing a corrupted cached sector over both FAT copies (which destroyed a card's FAT on 2026-11-19).
+  function fatSectorSane(b, rel) {
+    if (rel === 0 && (le32(b, 0) % TOP < 0x0FFFFFF0 || le32(b, 4) % TOP < 0x0FFFFFF0)) return false;
+    for (var o = 0; o < 512; o += 4) {
+      var v = le32(b, o) % TOP;
+      if (v !== 0 && v < 0x0FFFFFF0 && !validCluster(v)) return false;
+    }
+    return true;
+  }
   function setFat(c, v, cb) {
     var rel = Math.floor(c * 4 / 512), off = (c * 4) % 512;
     if (!validCluster(c) || rel >= g.fatsz) return cb(err('DAMAGED', 'refusing to write FAT entry ' + c));
     readFatSector(g.fat1 + rel, function (e, b) {
       if (e) return cb(e);
+      if (!fatSectorSane(b, rel)) { fatCache = { lba: -1, buf: null }; return cb(err('DAMAGED', 'FAT sector ' + rel + ' holds impossible entries; not writing it back')); }
       put32(b, off, v + (le32(b, off) - le32(b, off) % TOP));    // keep the reserved top 4 bits
       fatCache = { lba: -1, buf: null };                         // never trust the cache across a write
       (function copy(i) {
