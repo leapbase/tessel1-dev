@@ -5,7 +5,7 @@ The board connected to this machine is a **Tessel 1**. Tessel 2 notes are kept a
 
 ## Boards
 
-Each board has its own record in `boards/`: its ID, firmware, which module sits in which port, and test results. Currently: [boards/board-1.md](boards/board-1.md) (servo, camera, climate, GPS) and [boards/board-2.md](boards/board-2.md) (nRF24 radio, climate, SD card, IR). [boards/board-3.md](boards/board-3.md) (faulty USB link, firmware v0.2.0 flashed, no module could be tested). Tell boards apart by the ID that `tessel list` prints. Firmware: `firmware/` holds the Tessel 1 v0.2.0 binary and how to flash it from a local file, since the update server (`builds.tessel.io`) is gone. All three boards now run v0.2.0, which fixes the bitwise-operator crash that stopped the npm module libraries (verified: `rf-nrf24` on board 2, `climate-si7005` and `camera-vc0706` on board 1). `gps-a2235h` runs but needs the GPS module in port C. The sections below describe board 1 unless they say otherwise. Port letters in the test scripts match board 1, so change them for a board with a different layout.
+Each board has its own record in `boards/`: its ID, firmware, which module sits in which port, and test results. Currently: [boards/board-1.md](boards/board-1.md) (A servo, B camera, C GPS, D climate) and [boards/board-2.md](boards/board-2.md) (A nRF24 radio, B relay, C SD card, D IR). [boards/board-3.md](boards/board-3.md) (faulty USB link, firmware v0.2.0 flashed, no module could be tested). Tell boards apart by the ID that `tessel list` prints. Firmware: `firmware/` holds the Tessel 1 v0.2.0 binary and how to flash it from a local file, since the update server (`builds.tessel.io`) is gone. All three boards now run v0.2.0, which fixes the bitwise-operator crash that stopped the npm module libraries (verified: `rf-nrf24` on board 2, `climate-si7005` and `camera-vc0706` on board 1). `gps-a2235h` runs but needs the GPS module in port C (board 1 has it there; no position fix yet, needs a sky view). The sections below describe board 1 unless they say otherwise. Port letters in the test scripts match board 1, so change them for a board with a different layout.
 
 ## Connected board (board 1)
 
@@ -119,7 +119,7 @@ A GPS module and a camera module are plugged into the board.
 | GPS (A2235-H) | **D** | Working. 73 valid SiRF binary frames in 8 s; 2 satellites seen, best C/N0 13, no fix yet (indoors) | Crashes |
 
 | Servo (PCA9685) | **A** | Detected over I2C at `0x70` (the chip's all-call address). MODE1 `0x11`, MODE2 `0x04`, PRESCALE `0x1e` are the chip's exact reset values. Servo output not driven (no servo attached to test) | Not tested |
-| Climate (Si7005) | **C** | Working. ID register `0x11` = `0x50`; read 27.2 C and 27.4 %RH on 2026-11-18 | Not tested (expected to crash, uses bitwise operators) |
+| Climate (Si7005) | **C**, later **D** | Working on both. ID register `0x11` = `0x50`; read 27.2 C and 27.4 %RH on C, 24.3 C and 32.9 %RH on D (2026-11-18) | Not tested (expected to crash, uses bitwise operators) |
 
 Climate module note: the Si7005 ignores I2C until its active-low chip select (`digital[0]` on the module) is driven low. A plain I2C scan finds nothing without it, which is why an earlier scan of port C showed no devices. `raw-climate-test.js` drives the pin low, then reads the ID, one temperature and one humidity measurement. The humidity figure uses the datasheet's linearization but no temperature compensation, so treat it as approximate.
 
