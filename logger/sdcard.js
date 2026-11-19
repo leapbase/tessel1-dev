@@ -19,7 +19,7 @@ exports.open = function (port, cb) {
   csn.output(true);
   ppn.input();
   var spi = null, sdhc = false;
-  var stats = { xfers: 0, xferMs: 0 };         // diagnostics: SPI transfers made and time spent waiting for them
+  var stats = { xfers: 0, xferMs: 0, retries: 0 };         // diagnostics: SPI transfers made and time spent waiting for them
 
   // tx: Buffer or array of bytes. Calls back with the received Buffer.
   function xfer(tx, done) {
@@ -80,7 +80,7 @@ exports.open = function (port, cb) {
   // One transfer carries the command, the R1 response, the data token and the 512 data bytes: the response comes within
   // 8 bytes of the command and the token within ~64, so 6 + 64 + 514 bytes always contain the whole block.
   var READ_WINDOW = 6 + 64 + 514;
-  function readBlock(lba, done) {
+  function readOnce(lba, done) {
     var addr = sdhc ? lba : lba * 512;
     csn.output(true);
     xfer([0xFF], function () {
@@ -105,6 +105,18 @@ exports.open = function (port, cb) {
         done(null, block);
       });
     });
+  }
+
+  // A card is occasionally slow to start a block (seen about once per few dozen reads): reading is side-effect free, so
+  // retry up to twice after the failed attempt has drained the card.
+  function readBlock(lba, done) {
+    var tries = 0;
+    (function attempt() {
+      readOnce(lba, function (e, b) {
+        if (e && tries < 2 && String(e.message).indexOf('no data token') === 0) { tries++; stats.retries++; return attempt(); }
+        done(e, b);
+      });
+    })();
   }
 
   // Data, CRC and the first bytes of busy polling go out in one transfer; the card holds the line low while it programs.
