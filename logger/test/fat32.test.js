@@ -215,6 +215,77 @@ test('allocation starts at the FSInfo next-free hint', function (done) {
   });
 });
 
+// Reviewer finding (Critical): a directory entry that claims more data than its cluster chain holds, or a first cluster
+// outside the volume, must be refused (DAMAGED) before any block is written. Never write outside the file's own clusters.
+function damageEntry(dev, entry, patch, cb) {
+  dev.read(entry.dirLba, function (e, d) {
+    assert.ifError(e);
+    patch(d, entry.dirOffset);
+    dev.write(entry.dirLba, d, function (we) { assert.ifError(we); cb(); });
+  });
+}
+
+test('append to an entry whose size exceeds its cluster chain fails DAMAGED and writes nothing', function (done) {
+  var img = copyImage(), dev = memdev.open(img);
+  mountVol(dev, function (vol) {
+    vol.create('LOG.CSV', function (e, entry) {
+      assert.ifError(e);
+      vol.append(entry, pattern(600, 5), function (ae, ent2) {          // 600 bytes = 2 clusters at 512 B per cluster
+        assert.ifError(ae);
+        damageEntry(dev, ent2, function (d, o) { d[o + 28] = 5000 % 256; d[o + 29] = Math.floor(5000 / 256); }, function () {
+          mountVol(dev, function (vol2) {
+            vol2.find('LOG.CSV', function (fe, bad) {
+              assert.ifError(fe); assert.strictEqual(bad.size, 5000);
+              var before = dev.writes;
+              vol2.append(bad, new Buffer('hello\r\n'), function (er) {
+                assert.ok(er); assert.strictEqual(er.code, 'DAMAGED'); assert.strictEqual(dev.writes, before, 'no block may be written');
+                vol2.checkChain(bad, function (ce) { assert.ok(ce); assert.strictEqual(ce.code, 'DAMAGED'); dev.close(); done(); });
+              });
+            });
+          });
+        });
+      });
+    });
+  });
+});
+
+test('an entry whose first cluster lies outside the volume fails DAMAGED, no reads of arbitrary blocks written', function (done) {
+  var img = copyImage(), dev = memdev.open(img);
+  mountVol(dev, function (vol) {
+    vol.create('LOG.CSV', function (e, entry) {
+      assert.ifError(e);
+      damageEntry(dev, entry, function (d, o) { d[o + 28] = 100; d[o + 26] = 0xF0; d[o + 27] = 0xFF; d[o + 20] = 0xFF; d[o + 21] = 0x0F; }, function () {
+        mountVol(dev, function (vol2) {
+          vol2.find('LOG.CSV', function (fe, bad) {
+            assert.ifError(fe);
+            var before = dev.writes;
+            vol2.append(bad, new Buffer('x'), function (er) {
+              assert.ok(er); assert.strictEqual(er.code, 'DAMAGED'); assert.strictEqual(dev.writes, before);
+              vol2.readAll(bad, function (re) { assert.ok(re); assert.strictEqual(re.code, 'DAMAGED'); dev.close(); done(); });
+            });
+          });
+        });
+      });
+    });
+  });
+});
+
+test('a healthy entry passes checkChain (including an empty one)', function (done) {
+  var img = copyImage(), dev = memdev.open(img);
+  mountVol(dev, function (vol) {
+    vol.create('LOG.CSV', function (e, entry) {
+      assert.ifError(e);
+      vol.checkChain(entry, function (c0) {
+        assert.ifError(c0);
+        vol.append(entry, pattern(1300, 2), function (ae, ent2) {
+          assert.ifError(ae);
+          vol.checkChain(ent2, function (c1) { assert.ifError(c1); dev.close(); done(); });
+        });
+      });
+    });
+  });
+});
+
 test('a failed write surfaces an IO error instead of hanging', function (done) {
   var img = copyImage(), dev = memdev.open(img);
   mountVol(dev, function (vol) {

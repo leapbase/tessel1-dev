@@ -51,7 +51,7 @@ exports.mount = function (dev, cb) {
       cb(null, makeVolume(dev, {
         part: part, spc: spc, nfat: nfat, fatsz: fatsz, rootCl: le32(bs, 44),
         fat1: part + rsv, dataStart: part + rsv + nfat * fatsz,
-        nClusters: Math.floor((total - rsv - nfat * fatsz) / spc),
+        nClusters: Math.min(Math.floor((total - rsv - nfat * fatsz) / spc), fatsz * 128 - 2),
         fsinfo: le16(bs, 48) > 0 && le16(bs, 48) < 0xFFFF ? part + le16(bs, 48) : 0
       }));
     });
@@ -69,11 +69,15 @@ function makeVolume(dev, g) {
     if (fatCache.lba === lba) return cb(null, fatCache.buf);
     dev.read(lba, function (e, b) { if (e) return cb(ioErr(e)); fatCache = { lba: lba, buf: b }; cb(null, b); });
   }
+  // Cluster numbers from the card are untrusted: refuse anything outside the data area before any block is read or written.
+  function validCluster(c) { return c >= 2 && c <= g.nClusters + 1; }
   function getFat(c, cb) {
+    if (!validCluster(c)) return cb(err('DAMAGED', 'cluster ' + c + ' is outside the volume'));
     readFatSector(g.fat1 + Math.floor(c * 4 / 512), function (e, b) { cb(e, e ? 0 : le32(b, (c * 4) % 512) % TOP); });
   }
   function setFat(c, v, cb) {
     var rel = Math.floor(c * 4 / 512), off = (c * 4) % 512;
+    if (!validCluster(c) || rel >= g.fatsz) return cb(err('DAMAGED', 'refusing to write FAT entry ' + c));
     readFatSector(g.fat1 + rel, function (e, b) {
       if (e) return cb(e);
       put32(b, off, v + (le32(b, off) - le32(b, off) % TOP));    // keep the reserved top 4 bits
@@ -124,8 +128,10 @@ function makeVolume(dev, g) {
 
   // Visit root directory entries. visit(info) with info = {free, end, raw, lba, off}; return true to stop.
   function scanRoot(visit, cb) {
+    var hops = 0;
     (function cluster(c) {
       if (c < 2 || c >= 0x0FFFFFF8) return cb(null, false);
+      if (!validCluster(c) || ++hops > g.nClusters) return cb(err('NOT_FAT32', 'root directory chain is damaged'));
       (function sec(s) {
         if (s === g.spc) { return getFat(c, function (e, next) { if (e) return cb(e); cluster(next); }); }
         var lba = clusterLba(c) + s;
@@ -146,7 +152,7 @@ function makeVolume(dev, g) {
   function entryOf(info) {
     var b = info.raw, o = info.off;
     return {
-      name: showName(b, o), size: le32(b, o + 28), firstCluster: le16(b, o + 20) * 65536 + le16(b, o + 26),
+      name: showName(b, o), size: le32(b, o + 28), firstCluster: (le16(b, o + 20) % 4096) * 65536 + le16(b, o + 26),   // top 4 bits of the high word are reserved
       dirLba: info.lba, dirOffset: o
     };
   }
@@ -209,6 +215,25 @@ function makeVolume(dev, g) {
     });
   }
 
+  // Walk the chain of a file of `size` bytes and call back with its last cluster; DAMAGED if the chain is shorter than the
+  // size says, leaves the volume, or ends early. (A chain longer than the size is harmless: lost clusters.)
+  function walkChain(first, size, cb) {
+    if (!validCluster(first)) return cb(err('DAMAGED', 'first cluster ' + first + ' is outside the volume'));
+    var n = Math.ceil(size / clusterBytes), c = first;
+    (function walk(i) {
+      if (i === n) return cb(null, c, n);
+      getFat(c, function (e, next) {
+        if (e) return cb(e);
+        if (!validCluster(next)) return cb(err('DAMAGED', 'cluster chain ends before the ' + size + ' bytes the entry claims'));
+        c = next; walk(i + 1);
+      });
+    })(1);
+  }
+  vol.checkChain = function (entry, cb) {
+    if (entry.size === 0) return cb(entry.firstCluster === 0 || validCluster(entry.firstCluster) ? null : err('DAMAGED', 'first cluster out of range'));
+    walkChain(entry.firstCluster, entry.size, function (e) { cb(e || null); });
+  };
+
   vol.appendStream = function (entry) {
     var size = entry.size, first = entry.firstCluster, last = 0;
     var buf = new Buffer(512), bufLen = 0, inited = false, nClu = 0;   // nClu = clusters already in the chain
@@ -217,20 +242,17 @@ function makeVolume(dev, g) {
       if (inited) return cb(null);
       inited = true;
       if (size === 0 || first === 0) { size = 0; return cb(null); }
-      var n = Math.ceil(size / clusterBytes), c = first;
-      nClu = n;
-      (function walk(i) {
-        if (i === n) {
-          last = c;
-          if (size % 512 === 0) return cb(null);
-          bufLen = size % 512;
-          return dev.read(clusterLba(last) + Math.floor(((size - 1) % clusterBytes) / 512), function (e, b) {
-            if (e) return cb(ioErr(e));
-            b.copy(buf, 0, 0, 512); cb(null);
-          });
-        }
-        getFat(c, function (e, next) { if (e) return cb(e); c = next; walk(i + 1); });
-      })(1);
+      walkChain(first, size, function (we, lastCluster, n) {
+        if (we) { inited = false; return cb(we); }
+        nClu = n;
+        last = lastCluster;
+        if (size % 512 === 0) return cb(null);
+        bufLen = size % 512;
+        dev.read(clusterLba(last) + Math.floor(((size - 1) % clusterBytes) / 512), function (e, b) {
+          if (e) return cb(ioErr(e));
+          b.copy(buf, 0, 0, 512); cb(null);
+        });
+      });
     }
 
     // Write the buffered block, allocating and linking a new cluster when the block starts one.
@@ -299,6 +321,7 @@ function makeVolume(dev, g) {
     var out = new Buffer(entry.size), got = 0;
     if (entry.size === 0) return cb(null, out);
     (function cluster(c) {
+      if (!validCluster(c)) return cb(err('DAMAGED', 'cluster ' + c + ' is outside the volume'));
       (function sec(s) {
         if (got >= entry.size) return cb(null, out);
         if (s === g.spc) return getFat(c, function (e, next) { if (e) return cb(e); cluster(next); });

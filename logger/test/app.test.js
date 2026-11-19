@@ -246,6 +246,34 @@ test('with GPS: minute 5 order is climate, gps, then the photo; an existing GPS.
   });
 });
 
+test('a LOG.CSV whose size exceeds its cluster chain is left untouched (no block written into it) and LOG2.CSV is used', function (done) {
+  var path = img.fresh();
+  mountImg(path, function (vol, dev) {
+    vol.create('LOG.CSV', function (e, ent) {
+      assert.ifError(e);
+      vol.append(ent, new Buffer('time,temp_c,humidity,note\r\n'), function (ae, ent2) {
+        assert.ifError(ae);
+        dev.read(ent2.dirLba, function (re, d) {
+          d[ent2.dirOffset + 28] = 5000 % 256; d[ent2.dirOffset + 29] = Math.floor(5000 / 256);   // claims 5000 bytes, chain holds 27
+          dev.write(ent2.dirLba, d, function () {
+            dev.close();
+            var m = make(path, { gps: { fix: false } }), a = app.create(m.deps);
+            a.boot(false, function (e2) {
+              assert.ifError(e2);
+              mountImg(path, function (v2) {
+                v2.find('LOG.CSV', function (e3, old) {
+                  assert.strictEqual(old.size, 5000, 'LOG.CSV entry untouched');
+                  readFile(v2, 'LOG2.CSV', function (b) { assert.ok(b && lines(b)[0] === 'time,temp_c,humidity,note' && /,,,boot$/.test(lines(b)[1])); done(); });
+                });
+              });
+            });
+          });
+        });
+      });
+    });
+  });
+});
+
 test('card write failure mid-cycle: cycle still calls back, app is not ready, recovery boot works', function (done) {
   var path = img.fresh(), m = make(path), a = app.create(m.deps);
   a.boot(false, function () {

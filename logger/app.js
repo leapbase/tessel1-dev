@@ -38,7 +38,7 @@ exports.create = function (deps) {
   }
 
   // Find or create the log file `name` with `header` as its first line. Calls back with code DAMAGED for an entry
-  // that claims data but has no clusters.
+  // whose chain does not match its size (the caller then uses the fallback file and leaves this one untouched).
   function openLog(name, header, cb) {
     vol.find(name, function (e, entry) {
       if (e) return cb(e);
@@ -48,9 +48,11 @@ exports.create = function (deps) {
           vol.append(created, new Buffer(header), cb);
         });
       }
-      if (entry.size > 0 && entry.firstCluster < 2) { var d = new Error(name + ' entry is damaged'); d.code = 'DAMAGED'; return cb(d); }
-      if (entry.size === 0) return vol.append(entry, new Buffer(header), cb);
-      cb(null, entry);
+      vol.checkChain(entry, function (ce) {                       // DAMAGED: size beyond the chain, cluster outside the volume, ...
+        if (ce) return cb(ce);
+        if (entry.size === 0) return vol.append(entry, new Buffer(header), cb);
+        cb(null, entry);
+      });
     });
   }
 
