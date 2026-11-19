@@ -7,6 +7,8 @@ function ff(n) { var a = []; for (var i = 0; i < n; i++) a.push(0xFF); return a;
 function argBytes(v) { return [Math.floor(v / 16777216) % 256, Math.floor(v / 65536) % 256, Math.floor(v / 256) % 256, v % 256]; }
 
 // open(port, cb(err, dev)); dev.read(lba, cb(err, Buffer512)), dev.write(lba, Buffer512, cb(err)), dev.sdhc
+var spiCache = [];   // [{port, spi}]: one SPI object per port, reused when the card is re-opened after an error
+
 exports.open = function (port, cb) {
   var csn = port.pin['G1'], ppn = port.pin['G2'];
   csn.output(true);
@@ -125,7 +127,11 @@ exports.open = function (port, cb) {
     finished = true; clearTimeout(dt);
     if (e) return cb(err('IO', 'card detect failed'));
     if (v !== 0) return cb(err('NO_CARD', 'no card in the SD module'));
-    try { spi = new port.SPI({ clockSpeed: 200000 }); } catch (ex) { return cb(err('IO', 'SPI unavailable: ' + ex)); }
+    for (var i = 0; i < spiCache.length; i++) if (spiCache[i].port === port) spi = spiCache[i].spi;
+    if (!spi) {
+      try { spi = new port.SPI({ clockSpeed: 200000 }); } catch (ex) { return cb(err('IO', 'SPI unavailable: ' + ex)); }
+      spiCache.push({ port: port, spi: spi });
+    }
     init(function (ie) {
       if (ie) return cb(ie);
       cb(null, { read: readBlock, write: writeBlock, sdhc: sdhc });
