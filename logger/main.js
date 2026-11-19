@@ -1,10 +1,11 @@
 // Tessel 1 standalone logger: temperature and humidity to LOG.CSV every minute, a photo to IMGnnnn.JPG every 5 minutes.
-// Ports (board 1): SD card A, camera B, climate D. Push with logger/push.sh (it fills in START_EPOCH).
+// Ports (board 1): SD card A, camera B, GPS C, climate D. Also GPS.CSV: lat/lon/alt/satellites every minute (nofix indoors). Push with logger/push.sh (it fills in START_EPOCH).
 var tessel = require('tessel');
 var sdcard = require('./sdcard');
 var fat32 = require('./fat32');
 var climate = require('./climate');
 var camera = require('./camera');
+var gps = require('./gps').start(tessel.port['C']);
 var app = require('./app');
 var schedule = require('./schedule');
 
@@ -28,6 +29,7 @@ var logger = app.create({
   mount: fat32.mount,
   climateRead: function (cb) { climate.read(tessel.port['D'], cb); },
   capture: function (sink, cb) { camera.capture(tessel.port['B'], sink, cb); },
+  gpsSnapshot: gps.snapshot,
   nowEpoch: function () { return START_EPOCH + Math.floor((Date.now() - bootMs) / 1000); },
   blink: blink,
   say: say

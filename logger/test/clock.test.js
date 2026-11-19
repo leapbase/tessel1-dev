@@ -23,4 +23,12 @@ assert.strictEqual(rows.isPhotoMinute(0), true);
 assert.strictEqual(rows.isPhotoMinute(5), true);
 assert.strictEqual(rows.isPhotoMinute(3), false);
 
+// GPS.CSV rows: time,lat,lon,alt_m,sats,note (always 5 commas)
+assert.strictEqual(rows.gpsHeader(), 'time,lat,lon,alt_m,sats,note\r\n');
+assert.strictEqual(rows.gpsFix('t', { lat: 42.3601234, lon: -71.0589, alt: 12.34, sats: 7 }), 't,42.360123,-71.058900,12.3,7,\r\n');
+assert.strictEqual(rows.gpsNote('t', 'nofix'), 't,,,,,nofix\r\n');
+assert.strictEqual(commas(rows.gpsFix('t', { lat: 1, lon: 2, alt: 3, sats: 4 })), 5);
+assert.strictEqual(commas(rows.gpsNote('t', 'gps_err')), 5);
+assert.strictEqual(commas(rows.gpsHeader()), 5);
+
 console.log('clock.test: all passed');

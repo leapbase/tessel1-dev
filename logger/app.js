@@ -13,7 +13,7 @@ function pad4(n) { return ('000' + n).slice(-4); }
 
 exports.create = function (deps) {
   var app = { ready: false };
-  var vol = null, logEntry = null, imgNo = 0;
+  var vol = null, logEntry = null, gpsEntry = null, imgNo = 0;
 
   function stamp() { return clock.format(deps.nowEpoch()); }
   function cardFailed(e) {
@@ -29,18 +29,27 @@ exports.create = function (deps) {
     });
   }
 
-  // Find or create the log file `name`. Calls back with code DAMAGED for an entry that claims data but has no clusters.
-  function openLog(name, cb) {
+  function gpsAppend(text, cb) {
+    vol.append(gpsEntry, new Buffer(text), function (e, ent) {
+      if (e) return cb(e);
+      gpsEntry = ent;
+      cb(null);
+    });
+  }
+
+  // Find or create the log file `name` with `header` as its first line. Calls back with code DAMAGED for an entry
+  // that claims data but has no clusters.
+  function openLog(name, header, cb) {
     vol.find(name, function (e, entry) {
       if (e) return cb(e);
       if (!entry) {
         return vol.create(name, function (e2, created) {
           if (e2) return cb(e2);
-          vol.append(created, new Buffer(rows.header()), cb);
+          vol.append(created, new Buffer(header), cb);
         });
       }
       if (entry.size > 0 && entry.firstCluster < 2) { var d = new Error(name + ' entry is damaged'); d.code = 'DAMAGED'; return cb(d); }
-      if (entry.size === 0) return vol.append(entry, new Buffer(rows.header()), cb);
+      if (entry.size === 0) return vol.append(entry, new Buffer(header), cb);
       cb(null, entry);
     });
   }
@@ -53,13 +62,25 @@ exports.create = function (deps) {
       deps.mount(dev, function (e2, v) {
         if (e2) return bad(e2);
         vol = v;
-        openLog('LOG.CSV', function (e3, entry) {
-          if (e3 && e3.code === 'DAMAGED') return openLog('LOG2.CSV', function (e4, e5) { gotLog(e4, e5); });
+        openLog('LOG.CSV', rows.header(), function (e3, entry) {
+          if (e3 && e3.code === 'DAMAGED') return openLog('LOG2.CSV', rows.header(), function (e4, e5) { gotLog(e4, e5); });
           gotLog(e3, entry);
         });
         function gotLog(le, entry) {
           if (le) return bad(le);
           logEntry = entry;
+          if (!deps.gpsSnapshot) return afterGps();
+          openLog('GPS.CSV', rows.gpsHeader(), function (ge, gentry) {
+            if (ge && ge.code === 'DAMAGED') return openLog('GPS2.CSV', rows.gpsHeader(), gotGps);
+            gotGps(ge, gentry);
+          });
+          function gotGps(ge2, gentry2) {
+            if (ge2) return bad(ge2);
+            gpsEntry = gentry2;
+            afterGps();
+          }
+        }
+        function afterGps() {
           vol.highestImageNumber(function (e6, n) {
             if (e6) return bad(e6);
             imgNo = n;
@@ -98,13 +119,24 @@ exports.create = function (deps) {
     });
   }
 
+  // One GPS.CSV row per cycle from the latest GPS snapshot ({fix, lat, lon, alt, sats} or {err}); skipped when no GPS is wired in.
+  function gpsRow(cb) {
+    if (!deps.gpsSnapshot) return cb(null);
+    var g = deps.gpsSnapshot();
+    var text = g.err ? rows.gpsNote(stamp(), 'gps_err') : g.fix ? rows.gpsFix(stamp(), g) : rows.gpsNote(stamp(), 'nofix');
+    gpsAppend(text, cb);
+  }
+
   app.cycle = function (minute, cb) {
     deps.climateRead(function (e, r) {
       var row = e ? rows.note(stamp(), 'sensor_err') : rows.reading(stamp(), r.tempC, r.humidity);
       logAppend(row, function (le) {
         if (le) { cardFailed(le); return cb(); }
-        if (!rows.isPhotoMinute(minute)) return cb();
-        photo(cb);
+        gpsRow(function (ge) {
+          if (ge) { cardFailed(ge); return cb(); }
+          if (!rows.isPhotoMinute(minute)) return cb();
+          photo(cb);
+        });
       });
     });
   };

@@ -14,3 +14,16 @@ exports.note = function (ts, note) {
 exports.isPhotoMinute = function (minuteIndex) {
   return minuteIndex % 5 === 0;
 };
+
+// GPS.CSV rows: time,lat,lon,alt_m,sats,note (always six columns)
+exports.gpsHeader = function () {
+  return 'time,lat,lon,alt_m,sats,note\r\n';
+};
+
+exports.gpsFix = function (ts, g) {
+  return ts + ',' + g.lat.toFixed(6) + ',' + g.lon.toFixed(6) + ',' + g.alt.toFixed(1) + ',' + g.sats + ',\r\n';
+};
+
+exports.gpsNote = function (ts, note) {
+  return ts + ',,,,,' + note + '\r\n';
+};

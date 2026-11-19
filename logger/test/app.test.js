@@ -24,6 +24,7 @@ function make(imagePath, opts) {
         sink.write(JPEG.slice(off, Math.min(off + 128, JPEG.length)), function () { next(off + 128); });
       })(0);
     },
+    gpsSnapshot: opts.gps ? function () { calls.push('gps'); return opts.gps; } : undefined,
     nowEpoch: function () { return epoch++; },
     blink: function () { calls.push('blink'); },
     say: function (m) { notes.push(m); }
@@ -185,6 +186,59 @@ test('existing LOG.CSV with a damaged entry is left alone and LOG2.CSV is used',
                 readFile(v2, 'LOG2.CSV', function (b) { assert.ok(b && lines(b)[0] === 'time,temp_c,humidity,note'); done(); });
               });
             });
+          });
+        });
+      });
+    });
+  });
+});
+
+test('with GPS: boot creates GPS.CSV with its header; no-fix minute writes a nofix row after the climate row', function (done) {
+  var path = img.fresh(), m = make(path, { gps: { fix: false } }), a = app.create(m.deps);
+  a.boot(false, function (e) {
+    assert.ifError(e);
+    a.cycle(3, function () {
+      assert.deepEqual(m.calls.filter(function (c) { return c === 'climate' || c === 'gps'; }), ['climate', 'gps']);
+      mountImg(path, function (vol) {
+        readFile(vol, 'GPS.CSV', function (b) {
+          var l = lines(b); assert.strictEqual(l.length, 2, b.toString());
+          assert.strictEqual(l[0], 'time,lat,lon,alt_m,sats,note'); assert.ok(/,,,,,nofix$/.test(l[1]), l[1]);
+          l.forEach(function (row) { assert.strictEqual(row.split(',').length, 6, row); });
+          done();
+        });
+      });
+    });
+  });
+});
+
+test('with GPS: a fix is written with six decimals; a GPS error writes gps_err', function (done) {
+  var path = img.fresh(), m = make(path, { gps: { fix: true, lat: 42.3601234, lon: -71.0589, alt: 12.34, sats: 7 } }), a = app.create(m.deps);
+  a.boot(false, function () {
+    a.cycle(1, function () {
+      m.deps.gpsSnapshot = function () { return { err: true }; };
+      a.cycle(2, function () {
+        mountImg(path, function (vol) {
+          readFile(vol, 'GPS.CSV', function (b) {
+            var l = lines(b); assert.strictEqual(l.length, 3, b.toString());
+            assert.ok(/^2026-11-19 00:00:\d\d,42\.360123,-71\.058900,12\.3,7,$/.test(l[1]), l[1]); assert.ok(/,,,,,gps_err$/.test(l[2]), l[2]); done();
+          });
+        });
+      });
+    });
+  });
+});
+
+test('with GPS: minute 5 order is climate, gps, then the photo; an existing GPS.CSV is appended to', function (done) {
+  var path = img.fresh(), m = make(path, { gps: { fix: false } }), a = app.create(m.deps);
+  a.boot(false, function () {
+    a.cycle(5, function () {
+      var order = m.calls.filter(function (c) { return c === 'climate' || c === 'gps' || c === 'capture'; });
+      assert.deepEqual(order, ['climate', 'gps', 'capture']);
+      var m2 = make(path, { gps: { fix: false } }), a2 = app.create(m2.deps);
+      a2.boot(false, function () {
+        a2.cycle(6, function () {
+          mountImg(path, function (vol) {
+            readFile(vol, 'GPS.CSV', function (b) { var l = lines(b); assert.strictEqual(l.length, 3); assert.strictEqual(l[0], 'time,lat,lon,alt_m,sats,note'); done(); });
           });
         });
       });
