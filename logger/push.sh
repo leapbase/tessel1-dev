@@ -8,7 +8,8 @@ ROOT=$(dirname "$HERE")
 . "$HOME/.nvm/nvm.sh"
 nvm use 0.12 >/dev/null
 STAGE=$(mktemp -d)
-for f in main app clock rows fat32 sdcard climate camera gps schedule; do cp "$HERE/$f.js" "$STAGE/$f.js"; done
+trap 'rm -rf "$STAGE"' EXIT
+for f in main app clock rows fat32 sdcard climate camera gps schedule runner; do cp "$HERE/$f.js" "$STAGE/$f.js"; done
 mkdir -p "$STAGE/node_modules"
 cp -R "$ROOT/node_modules/gps-a2235h" "$STAGE/node_modules/"
 NOW=$(date +%s)
