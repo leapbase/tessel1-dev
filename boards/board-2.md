@@ -18,10 +18,20 @@ Find it again with `tessel list`, which prints the board ID. USB vendor and prod
 
 | Port | Module | Chip | Status |
 | --- | --- | --- | --- |
-| A | RF | nRF24L01 | Working. 9 of 9 registers read their power-on defaults, a write and readback of the RF channel register works. `RF_SETUP` reads `0x0f`, the default of the original nRF24L01 (the L01+ defaults to `0x0e`). Radio never transmitted, CE held low |
+| A | BLE | BLE113A (BGAPI over UART, 9600 baud, reset pin `digital[2]`) | Alive. After a reset pulse it sent its boot event (`80 0c 00 00 01 00 02 00 02 00 5d 00 03 00 01 06`): firmware 1.2.2 build 93, link layer 3, protocol 1, hardware 6. The BGAPI `hello` and `get_info` commands got no reply, unresolved. Not flashed. Test: `raw-ble-test.js`. UART works on A, not on C |
 | B | Relay | Two relays, plain GPIO (channel 1 = `digital[0]`, channel 2 = `digital[1]`) | Working. Verified by ear on 2026-11-18: `raw-relay-test.js` pulsed channel 1 three times, then channel 2 three times, and clicks were heard. Both channels left off. There is no chip to identify, so a software read-back alone proves nothing |
-| C | SD card | SD card on SPI | Working with a 15.3 GB SDHC card, FAT32 (read and write verified on 2026-11-18). An earlier card answered CMD0 and CMD8 but never finished ACMD41 in 25 s, so that card was bad, not the module. `raw-sd-ls.js` lists the root folder (25 entries). `raw-sd-write.js` wrote `TESSTEST.TXT` (103 bytes) to the root and read it back correctly. Chip select is pin `G1` driven by hand |
+| C | RF | nRF24L01 | Moved here from A. Was working on A (see below); not retested on C |
 | D | IR | ATtiny84-based | Chip responds on SPI, but reports firmware version `0x01` (library expects `0x04`) and module ID `0x00` (should be `0x0B`). **Not flashed.** The IR library would flash it on first use |
+
+## Moved off this board
+
+| Module | Note |
+| --- | --- |
+| SD card | Was on C, working (15.3 GB SDHC, `TESSTEST.TXT` written and read back). Removed from this board, so it is not in the layout above. Chip select was `G1` driven by hand |
+
+### RF test results (when it was on A)
+
+Working. 9 of 9 registers read their power-on defaults, a write and readback of the RF channel register works. `RF_SETUP` reads `0x0f`, the default of the original nRF24L01 (the L01+ defaults to `0x0e`). Radio never transmitted, CE held low
 
 ## Moved to another board
 
@@ -49,4 +59,4 @@ Same as board 1:
 
 ## Scripts used for this board
 
-`raw-board-scan.js` (per-port identify: I2C, climate, GPS, camera), `raw-climate-test.js`, `raw-sd-test.js`, `raw-nrf24-test.js`, `raw-attiny-test.js` (read-only identity check for ambient and IR), `raw-ambient-test.js`, `raw-accel-sd-test.js`, `raw-i2c-scan.js`, `raw-relay-test.js` (switches real loads, use with care), `raw-sd-ls.js` (root-folder listing), `raw-sd-write.js` (writes one test file to a FAT32 card; defaults to a dry run with sector backups, set `WRITE = true` to write). Port letters and the module settings at the top of each script match the table above, so edit them if a module sits elsewhere.
+`raw-ble-test.js` (BLE113A boot event and BGAPI check, port A), `raw-board-scan.js` (per-port identify: I2C, climate, GPS, camera), `raw-climate-test.js`, `raw-sd-test.js`, `raw-nrf24-test.js`, `raw-attiny-test.js` (read-only identity check for ambient and IR), `raw-ambient-test.js`, `raw-accel-sd-test.js`, `raw-i2c-scan.js`, `raw-relay-test.js` (switches real loads, use with care), `raw-sd-ls.js` (root-folder listing), `raw-sd-write.js` (writes one test file to a FAT32 card; defaults to a dry run with sector backups, set `WRITE = true` to write). Port letters and the module settings at the top of each script match the table above, so edit them if a module sits elsewhere.
