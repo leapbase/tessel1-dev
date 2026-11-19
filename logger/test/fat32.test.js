@@ -1,0 +1,515 @@
+// FAT32 writer tests (ES5, plain assert). Run on the Mac: node logger/test/fat32.test.js
+// Uses real FAT32 images made by make-image.sh and checks them with fsck_msdos and by mounting them in macOS.
+var assert = require('assert');
+var cp = require('child_process');
+var fs = require('fs');
+var os = require('os');
+var path = require('path');
+var memdev = require('./memdev');
+var fat32 = require('../fat32');
+
+var WORK = path.join(os.tmpdir(), 'fat32-test-' + process.pid);
+fs.mkdirSync(WORK);
+var BASE = path.join(WORK, 'base.img');
+cp.execFileSync(path.join(__dirname, 'make-image.sh'), [BASE, '1', '64']);   // 512-byte clusters: many chain extensions
+
+function copyImage() {
+  var out = path.join(WORK, 'img' + (copyImage.n = (copyImage.n || 0) + 1) + '.img');
+  cp.execFileSync('cp', ['-c', BASE, out]);
+  return out;
+}
+
+function attach(img, nomount) {
+  var args = ['attach'].concat(nomount ? ['-nomount'] : [], ['-imagekey', 'diskimage-class=CRawDiskImage', img]);
+  var out = cp.execFileSync('hdiutil', args).toString();
+  var lines = out.trim().split('\n');
+  var dev = lines[0].split(/\s+/)[0];
+  var mount = null;
+  lines.forEach(function (l) { var m = l.match(/(\/Volumes\/.*)$/); if (m) mount = m[1]; });
+  return { dev: dev, mount: mount };
+}
+function detach(a) { cp.execFileSync('hdiutil', ['detach', a.dev]); }
+
+function fsckClean(img) {
+  var a = attach(img, true);
+  try { cp.execFileSync('fsck_msdos', ['-n', a.dev.replace('/dev/disk', '/dev/rdisk')]); }
+  finally { detach(a); }
+}
+
+function pattern(n, seed) {
+  var b = new Buffer(n);
+  for (var i = 0; i < n; i++) b[i] = (i * 7 + seed) % 251;
+  return b;
+}
+
+function mountVol(dev, cb) {
+  fat32.mount(dev, function (err, vol) { assert.ifError(err); cb(vol); });
+}
+
+var tests = [];
+function test(name, fn) { tests.push({ name: name, fn: fn }); }
+
+test('mount fails with NOT_FAT32 on a blank device', function (done) {
+  fat32.mount(memdev.blank(), function (err, vol) {
+    assert.ok(err); assert.strictEqual(err.code, 'NOT_FAT32'); assert.ok(!vol); done();
+  });
+});
+
+test('create LOG.CSV then find returns it', function (done) {
+  var img = copyImage(), dev = memdev.open(img);
+  mountVol(dev, function (vol) {
+    vol.find('LOG.CSV', function (e, none) {
+      assert.ifError(e); assert.strictEqual(none, null);
+      vol.create('LOG.CSV', function (e2, entry) {
+        assert.ifError(e2); assert.strictEqual(entry.size, 0);
+        vol.find('LOG.CSV', function (e3, found) {
+          assert.ifError(e3); assert.strictEqual(found.name, 'LOG.CSV'); assert.strictEqual(found.size, 0);
+          vol.create('LOG.CSV', function (e4) { assert.ok(e4); assert.strictEqual(e4.code, 'EXISTS'); dev.close(); fsckClean(img); done(); });
+        });
+      });
+    });
+  });
+});
+
+test('three appends read back exactly', function (done) {
+  var img = copyImage(), dev = memdev.open(img);
+  mountVol(dev, function (vol) {
+    vol.create('LOG.CSV', function (e, entry) {
+      assert.ifError(e);
+      var parts = [new Buffer('a,b\r\n'), new Buffer('c,d\r\n'), new Buffer('e,f\r\n')];
+      (function step(i, ent) {
+        if (i === parts.length) {
+          return vol.readAll(ent, function (er, all) {
+            assert.ifError(er); assert.strictEqual(all.toString(), 'a,b\r\nc,d\r\ne,f\r\n'); assert.strictEqual(ent.size, 15);
+            dev.close(); fsckClean(img); done();
+          });
+        }
+        vol.append(ent, parts[i], function (er, ent2) { assert.ifError(er); step(i + 1, ent2); });
+      })(0, entry);
+    });
+  });
+});
+
+test('append across many cluster boundaries (40 KB in 600-byte pieces)', function (done) {
+  var img = copyImage(), dev = memdev.open(img), data = pattern(40000, 3);
+  mountVol(dev, function (vol) {
+    vol.create('BIG.BIN', function (e, entry) {
+      assert.ifError(e);
+      (function step(off, ent) {
+        if (off >= data.length) {
+          return vol.readAll(ent, function (er, all) {
+            assert.ifError(er); assert.strictEqual(ent.size, 40000); assert.ok(all.equals(data)); dev.close(); fsckClean(img); done();
+          });
+        }
+        vol.append(ent, data.slice(off, Math.min(off + 600, data.length)), function (er, ent2) { assert.ifError(er); step(off + 600, ent2); });
+      })(0, entry);
+    });
+  });
+});
+
+test('appendStream of 47000 bytes in 128-byte chunks; size set only at close', function (done) {
+  var img = copyImage(), dev = memdev.open(img), data = pattern(47000, 9);
+  mountVol(dev, function (vol) {
+    vol.create('IMG0001.JPG', function (e, entry) {
+      assert.ifError(e);
+      var s = vol.appendStream(entry);
+      (function step(off) {
+        if (off >= data.length) {
+          return vol.find('IMG0001.JPG', function (e1, mid) {
+            assert.ifError(e1); assert.strictEqual(mid.size, 0, 'size must stay 0 until close');
+            s.close(function (er, fin) {
+              assert.ifError(er); assert.strictEqual(fin.size, 47000);
+              vol.readAll(fin, function (er2, all) {
+                assert.ifError(er2); assert.ok(all.equals(data)); dev.close(); fsckClean(img);
+                var a = attach(img, false);
+                try { assert.ok(fs.readFileSync(path.join(a.mount, 'IMG0001.JPG')).equals(data), 'macOS reads identical bytes'); }
+                finally { detach(a); }
+                done();
+              });
+            });
+          });
+        }
+        s.write(data.slice(off, Math.min(off + 128, data.length)), function (er) { assert.ifError(er); step(off + 128); });
+      })(0);
+    });
+  });
+});
+
+test('highestImageNumber sees IMG0001 and IMG0007 and ignores other names', function (done) {
+  var img = copyImage(), dev = memdev.open(img);
+  mountVol(dev, function (vol) {
+    vol.highestImageNumber(function (e0, n0) {
+      assert.ifError(e0); assert.strictEqual(n0, 0);
+      var names = ['IMG0001.JPG', 'IMG0007.JPG', 'IMGX0009.JPG', 'LOG.CSV'];
+      (function mk(i) {
+        if (i === names.length) return vol.highestImageNumber(function (e, n) { assert.ifError(e); assert.strictEqual(n, 7); dev.close(); done(); });
+        vol.create(names[i], function (e) { assert.ifError(e); mk(i + 1); });
+      })(0);
+    });
+  });
+});
+
+test('append to a pre-existing LOG.CSV keeps old content (new mount) and leaves macOS files byte-identical', function (done) {
+  var img = copyImage();
+  var a = attach(img, false);                                    // macOS writes a long-named file (LFN entries) and a plain one
+  var keep1 = pattern(5000, 1), keep2 = new Buffer('keep me\n');
+  fs.writeFileSync(path.join(a.mount, 'a long file name for macOS.txt'), keep1);
+  fs.writeFileSync(path.join(a.mount, 'OLD.TXT'), keep2);
+  fs.writeFileSync(path.join(a.mount, 'LOG.CSV'), 'time,temp_c,humidity,note\r\nold,1.0,2.0,\r\n');
+  detach(a);
+  var dev = memdev.open(img);
+  mountVol(dev, function (vol) {
+    vol.find('LOG.CSV', function (e, entry) {
+      assert.ifError(e); assert.ok(entry, 'macOS-created LOG.CSV found past the LFN entries');
+      vol.append(entry, new Buffer('new,3.0,4.0,\r\n'), function (er, ent2) {
+        assert.ifError(er);
+        vol.readAll(ent2, function (er2, all) {
+          assert.ifError(er2); assert.strictEqual(all.toString(), 'time,temp_c,humidity,note\r\nold,1.0,2.0,\r\nnew,3.0,4.0,\r\n');
+          dev.close(); fsckClean(img);
+          var b = attach(img, false);
+          try {
+            assert.ok(fs.readFileSync(path.join(b.mount, 'a long file name for macOS.txt')).equals(keep1));
+            assert.ok(fs.readFileSync(path.join(b.mount, 'OLD.TXT')).equals(keep2));
+            assert.strictEqual(fs.readFileSync(path.join(b.mount, 'LOG.CSV')).toString(), 'time,temp_c,humidity,note\r\nold,1.0,2.0,\r\nnew,3.0,4.0,\r\n');
+          } finally { detach(b); }
+          done();
+        });
+      });
+    });
+  });
+});
+
+test('DIR_FULL when the root directory has no free slot, existing files untouched', function (done) {
+  var img = copyImage(), dev = memdev.open(img), made = [];
+  mountVol(dev, function (vol) {
+    (function mk(i) {
+      vol.create('F' + (1000 + i) + '.TXT', function (e, entry) {
+        if (e) {
+          assert.strictEqual(e.code, 'DIR_FULL'); assert.ok(made.length >= 10 && made.length <= 16, 'made ' + made.length);
+          return vol.readAll(made[0], function (er, all) { assert.ifError(er); assert.strictEqual(all.length, 0); dev.close(); fsckClean(img); done(); });
+        }
+        made.push(entry); mk(i + 1);
+      });
+    })(0);
+  });
+});
+
+test('allocation starts at the FSInfo next-free hint', function (done) {
+  var img = copyImage(), dev = memdev.open(img);
+  var fsinfoLba = memdev.PART_START + 1;                          // newfs_msdos puts FSInfo at sector 1
+  dev.read(fsinfoLba, function (e, b) {
+    assert.ifError(e);
+    assert.strictEqual(b[0], 0x52, 'FSInfo present');
+    b[492] = 5000 % 256; b[493] = Math.floor(5000 / 256); b[494] = 0; b[495] = 0;   // next-free hint = 5000
+    dev.write(fsinfoLba, b, function (we) {
+      assert.ifError(we);
+      mountVol(dev, function (vol) {
+        vol.create('HINT.BIN', function (ce, entry) {
+          assert.ifError(ce);
+          vol.append(entry, new Buffer('x'), function (ae, ent2) {
+            assert.ifError(ae); assert.strictEqual(ent2.firstCluster, 5000); dev.close(); fsckClean(img); done();
+          });
+        });
+      });
+    });
+  });
+});
+
+// Reviewer finding (Critical): a directory entry that claims more data than its cluster chain holds, or a first cluster
+// outside the volume, must be refused (DAMAGED) before any block is written. Never write outside the file's own clusters.
+function damageEntry(dev, entry, patch, cb) {
+  dev.read(entry.dirLba, function (e, d) {
+    assert.ifError(e);
+    patch(d, entry.dirOffset);
+    dev.write(entry.dirLba, d, function (we) { assert.ifError(we); cb(); });
+  });
+}
+
+test('append to an entry whose size exceeds its cluster chain fails DAMAGED and writes nothing', function (done) {
+  var img = copyImage(), dev = memdev.open(img);
+  mountVol(dev, function (vol) {
+    vol.create('LOG.CSV', function (e, entry) {
+      assert.ifError(e);
+      vol.append(entry, pattern(600, 5), function (ae, ent2) {          // 600 bytes = 2 clusters at 512 B per cluster
+        assert.ifError(ae);
+        damageEntry(dev, ent2, function (d, o) { d[o + 28] = 5000 % 256; d[o + 29] = Math.floor(5000 / 256); }, function () {
+          mountVol(dev, function (vol2) {
+            vol2.find('LOG.CSV', function (fe, bad) {
+              assert.ifError(fe); assert.strictEqual(bad.size, 5000);
+              var before = dev.writes;
+              vol2.append(bad, new Buffer('hello\r\n'), function (er) {
+                assert.ok(er); assert.strictEqual(er.code, 'DAMAGED'); assert.strictEqual(dev.writes, before, 'no block may be written');
+                vol2.checkChain(bad, function (ce) { assert.ok(ce); assert.strictEqual(ce.code, 'DAMAGED'); dev.close(); done(); });
+              });
+            });
+          });
+        });
+      });
+    });
+  });
+});
+
+test('an entry whose first cluster lies outside the volume fails DAMAGED, no reads of arbitrary blocks written', function (done) {
+  var img = copyImage(), dev = memdev.open(img);
+  mountVol(dev, function (vol) {
+    vol.create('LOG.CSV', function (e, entry) {
+      assert.ifError(e);
+      damageEntry(dev, entry, function (d, o) { d[o + 28] = 100; d[o + 26] = 0xF0; d[o + 27] = 0xFF; d[o + 20] = 0xFF; d[o + 21] = 0x0F; }, function () {
+        mountVol(dev, function (vol2) {
+          vol2.find('LOG.CSV', function (fe, bad) {
+            assert.ifError(fe);
+            var before = dev.writes;
+            vol2.append(bad, new Buffer('x'), function (er) {
+              assert.ok(er); assert.strictEqual(er.code, 'DAMAGED'); assert.strictEqual(dev.writes, before);
+              vol2.readAll(bad, function (re) { assert.ok(re); assert.strictEqual(re.code, 'DAMAGED'); dev.close(); done(); });
+            });
+          });
+        });
+      });
+    });
+  });
+});
+
+test('a healthy entry passes checkChain (including an empty one)', function (done) {
+  var img = copyImage(), dev = memdev.open(img);
+  mountVol(dev, function (vol) {
+    vol.create('LOG.CSV', function (e, entry) {
+      assert.ifError(e);
+      vol.checkChain(entry, function (c0) {
+        assert.ifError(c0);
+        vol.append(entry, pattern(1300, 2), function (ae, ent2) {
+          assert.ifError(ae);
+          vol.checkChain(ent2, function (c1) { assert.ifError(c1); dev.close(); done(); });
+        });
+      });
+    });
+  });
+});
+
+test('remove deletes one file, frees its clusters (reused by the next file), neighbours stay byte-identical, fsck clean', function (done) {
+  var img = copyImage(), dev = memdev.open(img);
+  var da = pattern(2000, 1), db = pattern(700, 2), dc = pattern(1500, 3), dd = pattern(700, 4);
+  mountVol(dev, function (vol) {
+    function make(name, data, cb) { vol.create(name, function (e, ent) { assert.ifError(e); vol.append(ent, data, function (ae, e2) { assert.ifError(ae); cb(e2); }); }); }
+    make('A.TXT', da, function (ea) { make('B.TXT', db, function (eb) { make('C.TXT', dc, function (ec) {
+      vol.remove(eb, function (re) {
+        assert.ifError(re);
+        vol.find('B.TXT', function (fe, gone) {
+          assert.ifError(fe); assert.strictEqual(gone, null, 'B.TXT is gone');
+          vol.readAll(ea, function (e1, ra) { assert.ok(ra.equals(da));
+            vol.readAll(ec, function (e2, rc) { assert.ok(rc.equals(dc));
+              make('D.TXT', dd, function (ed) {
+                assert.strictEqual(ed.firstCluster, eb.firstCluster, 'freed clusters are reused');
+                dev.close(); fsckClean(img); done();
+              });
+            });
+          });
+        });
+      });
+    }); }); });
+  });
+});
+
+test('remove refuses an entry with a cluster outside the volume and writes nothing', function (done) {
+  var img = copyImage(), dev = memdev.open(img);
+  mountVol(dev, function (vol) {
+    vol.create('X.TXT', function (e, entry) {
+      assert.ifError(e);
+      damageEntry(dev, entry, function (d, o) { d[o + 28] = 100; d[o + 26] = 0xF0; d[o + 27] = 0xFF; d[o + 20] = 0xFF; d[o + 21] = 0x0F; }, function () {
+        mountVol(dev, function (vol2) {
+          vol2.find('X.TXT', function (fe, bad) {
+            var before = dev.writes;
+            vol2.remove(bad, function (re) { assert.ok(re); assert.strictEqual(re.code, 'DAMAGED'); assert.strictEqual(dev.writes, before); dev.close(); done(); });
+          });
+        });
+      });
+    });
+  });
+});
+
+test('remove of an empty file (no clusters) just deletes the directory entry', function (done) {
+  var img = copyImage(), dev = memdev.open(img);
+  mountVol(dev, function (vol) {
+    vol.create('E.TXT', function (e, entry) {
+      assert.ifError(e);
+      vol.remove(entry, function (re) {
+        assert.ifError(re);
+        vol.find('E.TXT', function (fe, gone) { assert.strictEqual(gone, null); dev.close(); fsckClean(img); done(); });
+      });
+    });
+  });
+});
+
+// Root-cause safety net (2026-11-19 incident): a cached FAT sector can turn into garbage on the board. The writer must never
+// write a FAT sector back to the card if it holds impossible entries; refuse with DAMAGED and write nothing.
+test('a FAT sector with impossible entries is never written back (DAMAGED, zero writes)', function (done) {
+  var img = copyImage(), dev = memdev.open(img);
+  mountVol(dev, function (vol) {
+    dev.read(memdev.PART_START, function (e0, bs) {
+    assert.ifError(e0);
+    var fatLba = memdev.PART_START + bs[14] + bs[15] * 256;      // FAT 1 starts after the reserved sectors
+    dev.read(fatLba, function (e, b) {
+      assert.ifError(e);
+      assert.ok(b[0] >= 0xF0 && b[3] === 0x0F, 'this is the first FAT sector (media descriptor entry)');
+      b[16] = 0x10; b[17] = 0x16; b[18] = 0x02; b[19] = 0x08;   // entry 4 = 0x08021610: far beyond any cluster, like the garbage seen on the card
+      dev.write(fatLba, b, function (we) {
+        assert.ifError(we);
+        mountVol(dev, function (vol2) {                         // fresh mount: no cached sector
+          vol2.create('LOG.CSV', function (ce, entry) {
+            assert.ifError(ce);
+            var before = dev.writes;
+            vol2.append(entry, new Buffer('x\r\n'), function (er) {
+              assert.ok(er); assert.strictEqual(er.code, 'DAMAGED'); assert.strictEqual(dev.writes, before, 'no block may be written');
+              dev.close(); done();
+            });
+          });
+        });
+      });
+    });
+    });
+  });
+});
+
+// Folder support: the logger keeps its files in a folder called "tessel-log" (a long name, so it needs a long-filename entry).
+test('ensureDir creates "tessel-log"; macOS lists it, reads a file inside it, fsck is clean, nothing leaks into the root', function (done) {
+  var img = copyImage(), dev = memdev.open(img), data = pattern(1800, 6);
+  mountVol(dev, function (vol) {
+    vol.ensureDir('tessel-log', function (e, dir) {
+      assert.ifError(e);
+      dir.create('DATA.CSV', function (ce, entry) {
+        assert.ifError(ce);
+        dir.append(entry, data, function (ae) {
+          assert.ifError(ae);
+          vol.find('DATA.CSV', function (fe, inRoot) {
+            assert.ifError(fe); assert.strictEqual(inRoot, null, 'DATA.CSV is not in the root');
+            dev.close(); fsckClean(img);
+            var a = attach(img, false);
+            try {
+              assert.ok(fs.readdirSync(a.mount).indexOf('tessel-log') >= 0, 'macOS shows the folder name: ' + fs.readdirSync(a.mount));
+              assert.ok(fs.statSync(path.join(a.mount, 'tessel-log')).isDirectory());
+              assert.ok(fs.readFileSync(path.join(a.mount, 'tessel-log', 'DATA.CSV')).equals(data));
+            } finally { detach(a); }
+            done();
+          });
+        });
+      });
+    });
+  });
+});
+
+test('ensureDir on a new mount finds the same folder (no duplicate) and its files', function (done) {
+  var img = copyImage(), dev = memdev.open(img);
+  mountVol(dev, function (vol) {
+    vol.ensureDir('tessel-log', function (e, dir) {
+      assert.ifError(e);
+      dir.create('IMG0003.JPG', function (ce) {
+        assert.ifError(ce);
+        mountVol(dev, function (vol2) {
+          vol2.ensureDir('tessel-log', function (e2, dir2) {
+            assert.ifError(e2);
+            dir2.highestImageNumber(function (he, n) {
+              assert.ifError(he); assert.strictEqual(n, 3);
+              vol2.highestImageNumber(function (he2, n2) { assert.strictEqual(n2, 0, 'the root has no images');
+                dev.close(); fsckClean(img);
+                var a = attach(img, false);
+                try { assert.strictEqual(fs.readdirSync(a.mount).filter(function (x) { return x === 'tessel-log'; }).length, 1); } finally { detach(a); }
+                done();
+              });
+            });
+          });
+        });
+      });
+    });
+  });
+});
+
+test('ensureDir uses a "tessel-log" folder that macOS made, keeps its files, and new files appear alongside', function (done) {
+  var img = copyImage();
+  var a = attach(img, false);
+  fs.mkdirSync(path.join(a.mount, 'tessel-log'));
+  fs.writeFileSync(path.join(a.mount, 'tessel-log', 'OLD.TXT'), 'keep me\n');
+  detach(a);
+  var dev = memdev.open(img);
+  mountVol(dev, function (vol) {
+    vol.ensureDir('tessel-log', function (e, dir) {
+      assert.ifError(e);
+      dir.find('OLD.TXT', function (fe, old) {
+        assert.ifError(fe); assert.ok(old, 'the existing file is visible through the folder');
+        dir.create('DATA.CSV', function (ce, entry) {
+          assert.ifError(ce);
+          dir.append(entry, new Buffer('x,y\r\n'), function (ae) {
+            assert.ifError(ae); dev.close(); fsckClean(img);
+            var b = attach(img, false);
+            try {
+              assert.strictEqual(fs.readFileSync(path.join(b.mount, 'tessel-log', 'OLD.TXT')).toString(), 'keep me\n');
+              assert.strictEqual(fs.readFileSync(path.join(b.mount, 'tessel-log', 'DATA.CSV')).toString(), 'x,y\r\n');
+            } finally { detach(b); }
+            done();
+          });
+        });
+      });
+    });
+  });
+});
+
+test('real card geometry (64 sectors per cluster): folder, log and a 49 KB photo, fsck clean, macOS reads them back', function (done) {
+  var big = path.join(WORK, 'spc64.img');
+  cp.execFileSync(path.join(__dirname, 'make-image.sh'), [big, '64', '2200']);   // 2.2 GB sparse: FAT32 needs 65525 clusters
+  var dev = memdev.open(big), photo = pattern(49000, 8);
+  mountVol(dev, function (vol) {
+    vol.ensureDir('tessel-log', function (e, dir) {
+      assert.ifError(e);
+      dir.create('DATA.CSV', function (ce, log) {
+        assert.ifError(ce);
+        (function rows(i, ent) {
+          if (i === 60) {
+            return dir.create('IMG0001.JPG', function (pe, pic) {
+              assert.ifError(pe);
+              dir.append(pic, photo, function (ae) {
+                assert.ifError(ae);
+                dev.close(); fsckClean(big);
+                var a = attach(big, false);
+                try {
+                  var csv = fs.readFileSync(path.join(a.mount, 'tessel-log', 'DATA.CSV')).toString();
+                  assert.strictEqual(csv.split('\r\n').length - 1, 60);
+                  assert.ok(fs.readFileSync(path.join(a.mount, 'tessel-log', 'IMG0001.JPG')).equals(photo));
+                } finally { detach(a); }
+                done();
+              });
+            });
+          }
+          dir.append(ent, new Buffer('2026-11-19 00:00:00,21.3,40.1,,,,,\r\n'), function (re, e2) { assert.ifError(re); rows(i + 1, e2); });
+        })(0, log);
+      });
+    });
+  });
+});
+
+test('a failed write surfaces an IO error instead of hanging', function (done) {
+  var img = copyImage(), dev = memdev.open(img);
+  mountVol(dev, function (vol) {
+    vol.create('LOG.CSV', function (e, entry) {
+      assert.ifError(e);
+      dev.failAfter = dev.writes;                                // every later write fails
+      vol.append(entry, new Buffer('x\r\n'), function (er) { assert.ok(er); assert.strictEqual(er.code, 'IO'); dev.close(); done(); });
+    });
+  });
+});
+
+process.on('uncaughtException', function (e) {
+  console.log('FAIL\n' + (e && e.stack));
+  try { cp.execFileSync('rm', ['-rf', WORK]); } catch (x) {}
+  process.exit(1);
+});
+
+(function run(i) {
+  if (i === tests.length) {
+    cp.execFileSync('rm', ['-rf', WORK]);
+    console.log('fat32.test: ' + tests.length + ' passed');
+    return;
+  }
+  var t = tests[i];
+  var timer = setTimeout(function () { console.log('TIMEOUT ' + t.name); process.exit(1); }, 60000);
+  try { t.fn(function () { clearTimeout(timer); console.log('ok - ' + t.name); run(i + 1); }); }
+  catch (e) { console.log('FAIL - ' + t.name + '\n' + (e && e.stack)); cp.execFileSync('rm', ['-rf', WORK]); process.exit(1); }
+})(0);

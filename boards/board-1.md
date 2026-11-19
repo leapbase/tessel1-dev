@@ -19,7 +19,7 @@ Find it again with `tessel list`, which prints the board ID.
 
 | Port | Module | Chip | Status |
 | --- | --- | --- | --- |
-| A | Servo | PCA9685 at I2C `0x70` | Detected. Registers read their reset values (MODE1 `0x11`, MODE2 `0x04`, PRESCALE `0x1e`). Servo output not driven, no servo attached |
+| A | SD card | SD card on SPI (chip select `G1`, card detect `G2`) | Working with the 15.3 GB SDHC FAT32 card (changed from the servo module on 2026-11-19). Used by the logger below |
 | B | Camera | VC0706 (`VC0703 1.00`) | Working. 640x480 JPEG captured with `raw-camera-photo.js` |
 | C | GPS | A2235-H (SiRF binary at 115200 baud over the hardware UART; NMEA via the library's software UART) | Chip alive and streaming (raw test, on port D, v0.1.8). The `gps-a2235h` library now works here: it reports `ready` within 1 s on port C (v0.2.0). No fix in 5 minutes with the library, and none in a 10 minute raw run: best 5 satellites at peak C/N0 23, 0 used |
 | D | Climate | Si7005 (ID `0x50`) | Working on port C before the swap (raw: 27.2 C, 27.4 %RH; `climate-si7005` library on v0.2.0: 21.3 C, 37.6 %RH). Retested on port D (v0.2.0, `raw-climate-test.js`): ID `0x50`, 24.3 C, 32.9 %RH. Chip select `digital[0]` must be low |
@@ -38,3 +38,12 @@ Find it again with `tessel list`, which prints the board ID.
 ## GPS library needs port C
 
 The `gps-a2235h` library uses the firmware's software UART, which on Tessel 1 exists only on **port C** (its own README says so). With the GPS on port D the library reported `Could not find GPS module` even though the raw SiRF test proved the module alive. After swapping the GPS and climate modules (GPS now on C), the library reported `ready` within 1 second. A 5 minute run printed no `coordinates`, `altitude` or `fix` events, so there was no position fix: the antenna needs a clear view of the sky, and in every run so far (raw 10 minute run, library 5 minute run) it saw at most 5 satellites at weak signal. The raw scripts (`raw-gps-test.js`, `raw-gps-monitor.js`) use the hardware UART and work on port D, not C.
+
+## Standalone logger (2026-11-19)
+
+`logger/` runs on the board by itself: one `DATA.CSV` row per minute with temperature, humidity and GPS together (`time,temp_c,humidity,lat,lon,alt_m,sats,note`; the note says `nofix` indoors, `sensor_err` or `gps_err` on a failure, `boot` on a restart) and an `IMGnnnn.JPG` camera photo every 5 minutes, on the SD card in port A. Ports: SD A, camera B, GPS C, climate D. The earlier `LOG.CSV` and `GPS.CSV` on the card come from the first version and are no longer written. Design: `docs/superpowers/specs/2026-11-18-sd-logger-design.md`, plan: `docs/superpowers/plans/2026-11-19-sd-logger.md`.
+
+- **Start on boot:** `./logger/push.sh` writes it to the board's flash (it fills in `START_EPOCH` with the current time). It then starts on every power-up. Undo with `nvm use 0.12 && tessel erase`. Watch it with `tessel logs`.
+- **Clock:** the board has no clock. Times are the push time plus uptime, so after a power cut they restart from the push time; a `boot` row in `LOG.CSV` marks each restart.
+- **Speed:** the SD driver uses Buffers and one large SPI transfer per block (a block read is about 0.26 s), so a photo cycle takes about a minute and no minute rows are missing.
+- **Tests:** `node logger/test/clock.test.js`, `schedule.test.js`, `runner.test.js`, `fat32.test.js`, `app.test.js` on the Mac (they use real FAT32 images and `fsck_msdos`). On-board checks: `logger/spike-sd.js`, `logger/spike-sensors.js`.
