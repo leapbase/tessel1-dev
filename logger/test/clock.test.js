@@ -13,22 +13,24 @@ assert.strictEqual(clock.format(951782400), '2000-02-29 00:00:00');
 assert.strictEqual(clock.format(951782400 + 86400), '2000-03-01 00:00:00');
 assert.strictEqual(clock.now(1000, 61), 1061);
 
-assert.strictEqual(rows.header(), 'time,temp_c,humidity,note\r\n');
-assert.strictEqual(rows.reading('t', 21.34, 40.06), 't,21.3,40.1,\r\n');
-assert.strictEqual(rows.note('t', 'boot'), 't,,,boot\r\n');
-assert.strictEqual(commas(rows.reading('t', 1, 2)), 3);
-assert.strictEqual(commas(rows.note('t', 'sensor_err')), 3);
-assert.strictEqual(commas(rows.header()), 3);
+// One combined CSV row per minute: time,temp_c,humidity,lat,lon,alt_m,sats,note (always 8 columns = 7 commas)
+var C = { tempC: 21.34, humidity: 40.06 };
+var FIX = { fix: true, lat: 42.3601234, lon: -71.0589, alt: 12.34, sats: 7 };
+assert.strictEqual(rows.header(), 'time,temp_c,humidity,lat,lon,alt_m,sats,note\r\n');
+assert.strictEqual(rows.reading('t', C), 't,21.3,40.1,,,,,\r\n');                           // no GPS wired in
+assert.strictEqual(rows.reading('t', C, { fix: false }), 't,21.3,40.1,,,,,nofix\r\n');
+assert.strictEqual(rows.reading('t', C, FIX), 't,21.3,40.1,42.360123,-71.058900,12.3,7,\r\n');
+assert.strictEqual(rows.reading('t', C, { err: true }), 't,21.3,40.1,,,,,gps_err\r\n');
+assert.strictEqual(rows.reading('t', null, FIX), 't,,,42.360123,-71.058900,12.3,7,sensor_err\r\n');
+assert.strictEqual(rows.reading('t', null, { fix: false }), 't,,,,,,,sensor_err;nofix\r\n');
+assert.strictEqual(rows.reading('t', null, { err: true }), 't,,,,,,,sensor_err;gps_err\r\n');
+assert.strictEqual(rows.note('t', 'boot'), 't,,,,,,,boot\r\n');
+assert.strictEqual(rows.note('t', 'photo_err'), 't,,,,,,,photo_err\r\n');
+[rows.header(), rows.reading('t', C), rows.reading('t', C, FIX), rows.reading('t', null, { err: true }), rows.note('t', 'boot')].forEach(function (r) {
+  assert.strictEqual(commas(r), 7, r);
+});
 assert.strictEqual(rows.isPhotoMinute(0), true);
 assert.strictEqual(rows.isPhotoMinute(5), true);
 assert.strictEqual(rows.isPhotoMinute(3), false);
-
-// GPS.CSV rows: time,lat,lon,alt_m,sats,note (always 5 commas)
-assert.strictEqual(rows.gpsHeader(), 'time,lat,lon,alt_m,sats,note\r\n');
-assert.strictEqual(rows.gpsFix('t', { lat: 42.3601234, lon: -71.0589, alt: 12.34, sats: 7 }), 't,42.360123,-71.058900,12.3,7,\r\n');
-assert.strictEqual(rows.gpsNote('t', 'nofix'), 't,,,,,nofix\r\n');
-assert.strictEqual(commas(rows.gpsFix('t', { lat: 1, lon: 2, alt: 3, sats: 4 })), 5);
-assert.strictEqual(commas(rows.gpsNote('t', 'gps_err')), 5);
-assert.strictEqual(commas(rows.gpsHeader()), 5);
 
 console.log('clock.test: all passed');

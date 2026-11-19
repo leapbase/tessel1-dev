@@ -41,9 +41,9 @@ The `gps-a2235h` library uses the firmware's software UART, which on Tessel 1 ex
 
 ## Standalone logger (2026-11-19)
 
-`logger/` runs on the board by itself: `LOG.CSV` (temperature and humidity every minute), `GPS.CSV` (latitude, longitude, altitude, satellites every minute; `nofix` rows indoors) and `IMGnnnn.JPG` (a camera photo every 5 minutes) on the SD card in port A. Ports: SD A, camera B, GPS C, climate D. Design: `docs/superpowers/specs/2026-11-18-sd-logger-design.md`, plan: `docs/superpowers/plans/2026-11-19-sd-logger.md`.
+`logger/` runs on the board by itself: one `DATA.CSV` row per minute with temperature, humidity and GPS together (`time,temp_c,humidity,lat,lon,alt_m,sats,note`; the note says `nofix` indoors, `sensor_err` or `gps_err` on a failure, `boot` on a restart) and an `IMGnnnn.JPG` camera photo every 5 minutes, on the SD card in port A. Ports: SD A, camera B, GPS C, climate D. The earlier `LOG.CSV` and `GPS.CSV` on the card come from the first version and are no longer written. Design: `docs/superpowers/specs/2026-11-18-sd-logger-design.md`, plan: `docs/superpowers/plans/2026-11-19-sd-logger.md`.
 
 - **Start on boot:** `./logger/push.sh` writes it to the board's flash (it fills in `START_EPOCH` with the current time). It then starts on every power-up. Undo with `nvm use 0.12 && tessel erase`. Watch it with `tessel logs`.
 - **Clock:** the board has no clock. Times are the push time plus uptime, so after a power cut they restart from the push time; a `boot` row in `LOG.CSV` marks each restart.
-- **Known limit:** SD writes are slow (a one-line append about 7 s, a photo cycle about 3 minutes), so about two log rows are missing around each photo.
-- **Tests:** `node logger/test/clock.test.js`, `schedule.test.js`, `fat32.test.js`, `app.test.js` on the Mac (they use real FAT32 images and `fsck_msdos`). On-board checks: `logger/spike-sd.js`, `logger/spike-sensors.js`.
+- **Speed:** the SD driver uses Buffers and one large SPI transfer per block (a block read is about 0.26 s), so a photo cycle takes about a minute and no minute rows are missing.
+- **Tests:** `node logger/test/clock.test.js`, `schedule.test.js`, `runner.test.js`, `fat32.test.js`, `app.test.js` on the Mac (they use real FAT32 images and `fsck_msdos`). On-board checks: `logger/spike-sd.js`, `logger/spike-sensors.js`.

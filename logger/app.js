@@ -1,8 +1,10 @@
 // Logger logic with its hardware injected, so it runs against a FAT32 image on the Mac and against the board alike.
+// One DATA.CSV row per minute carries temperature, humidity and the GPS state together; a photo follows every 5th minute.
 // create(deps) -> app with app.ready, app.boot(recovering, cb(err)), app.cycle(minute, cb()). cycle never reports errors:
 // it logs them, blinks, and clears app.ready so the caller re-boots (re-mounts) before the next cycle.
 // deps: openCard(cb(err, dev)), mount(dev, cb(err, vol)), climateRead(cb(err, {tempC, humidity})),
-//       capture(sink, cb(err, n)), nowEpoch() -> seconds, blink(), say(msg).
+//       capture(sink, cb(err, n)), gpsSnapshot() -> {fix, lat, lon, alt, sats} | {err} (optional), nowEpoch() -> seconds,
+//       blink(), say(msg).
 // ES5, no bitwise operators.
 var clock = require('./clock');
 var rows = require('./rows');
@@ -13,7 +15,7 @@ function pad4(n) { return ('000' + n).slice(-4); }
 
 exports.create = function (deps) {
   var app = { ready: false };
-  var vol = null, logEntry = null, gpsEntry = null, imgNo = 0;
+  var vol = null, logEntry = null, imgNo = 0;
 
   function stamp() { return clock.format(deps.nowEpoch()); }
   function cardFailed(e) {
@@ -25,14 +27,6 @@ exports.create = function (deps) {
     vol.append(logEntry, new Buffer(text), function (e, ent) {
       if (e) return cb(e);
       logEntry = ent;
-      cb(null);
-    });
-  }
-
-  function gpsAppend(text, cb) {
-    vol.append(gpsEntry, new Buffer(text), function (e, ent) {
-      if (e) return cb(e);
-      gpsEntry = ent;
       cb(null);
     });
   }
@@ -64,31 +58,19 @@ exports.create = function (deps) {
       deps.mount(dev, function (e2, v) {
         if (e2) return bad(e2);
         vol = v;
-        openLog('LOG.CSV', rows.header(), function (e3, entry) {
-          if (e3 && e3.code === 'DAMAGED') return openLog('LOG2.CSV', rows.header(), function (e4, e5) { gotLog(e4, e5); });
+        openLog('DATA.CSV', rows.header(), function (e3, entry) {
+          if (e3 && e3.code === 'DAMAGED') return openLog('DATA2.CSV', rows.header(), gotLog);
           gotLog(e3, entry);
         });
         function gotLog(le, entry) {
           if (le) return bad(le);
           logEntry = entry;
-          if (!deps.gpsSnapshot) return afterGps();
-          openLog('GPS.CSV', rows.gpsHeader(), function (ge, gentry) {
-            if (ge && ge.code === 'DAMAGED') return openLog('GPS2.CSV', rows.gpsHeader(), gotGps);
-            gotGps(ge, gentry);
-          });
-          function gotGps(ge2, gentry2) {
-            if (ge2) return bad(ge2);
-            gpsEntry = gentry2;
-            afterGps();
-          }
-        }
-        function afterGps() {
-          vol.highestImageNumber(function (e6, n) {
-            if (e6) return bad(e6);
+          vol.highestImageNumber(function (e4, n) {
+            if (e4) return bad(e4);
             imgNo = n;
             function ready() { app.ready = true; cb(null); }
             if (recovering) return ready();
-            logAppend(rows.note(stamp(), 'boot'), function (e7) { if (e7) return bad(e7); ready(); });
+            logAppend(rows.note(stamp(), 'boot'), function (e5) { if (e5) return bad(e5); ready(); });
           });
         }
       });
@@ -121,24 +103,17 @@ exports.create = function (deps) {
     });
   }
 
-  // One GPS.CSV row per cycle from the latest GPS snapshot ({fix, lat, lon, alt, sats} or {err}); skipped when no GPS is wired in.
-  function gpsRow(cb) {
-    if (!deps.gpsSnapshot) return cb(null);
-    var g = deps.gpsSnapshot();
-    var text = g.err ? rows.gpsNote(stamp(), 'gps_err') : g.fix ? rows.gpsFix(stamp(), g) : rows.gpsNote(stamp(), 'nofix');
-    gpsAppend(text, cb);
+  function gpsNow() {
+    if (!deps.gpsSnapshot) return undefined;
+    try { return deps.gpsSnapshot(); } catch (e) { deps.say('gps snapshot failed: ' + e); return { err: true }; }
   }
 
   app.cycle = function (minute, cb) {
     deps.climateRead(function (e, r) {
-      var row = e ? rows.note(stamp(), 'sensor_err') : rows.reading(stamp(), r.tempC, r.humidity);
-      logAppend(row, function (le) {
+      logAppend(rows.reading(stamp(), e ? null : r, gpsNow()), function (le) {
         if (le) { cardFailed(le); return cb(); }
-        gpsRow(function (ge) {
-          if (ge) { cardFailed(ge); return cb(); }
-          if (!rows.isPhotoMinute(minute)) return cb();
-          photo(cb);
-        });
+        if (!rows.isPhotoMinute(minute)) return cb();
+        photo(cb);
       });
     });
   };

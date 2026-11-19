@@ -51,7 +51,7 @@ test('boot with no card reports NO_CARD, writes nothing, blinks', function (done
   });
 });
 
-test('boot creates LOG.CSV with header and a boot row; a second boot appends only a boot row', function (done) {
+test('boot creates DATA.CSV with header and a boot row; a second boot appends only a boot row', function (done) {
   var path = img.fresh(), m = make(path), a = app.create(m.deps);
   a.boot(false, function (e) {
     assert.ifError(e); assert.strictEqual(a.ready, true);
@@ -59,26 +59,26 @@ test('boot creates LOG.CSV with header and a boot row; a second boot appends onl
     a2.boot(false, function (e2) {
       assert.ifError(e2);
       mountImg(path, function (vol) {
-        readFile(vol, 'LOG.CSV', function (b) {
+        readFile(vol, 'DATA.CSV', function (b) {
           var l = lines(b);
-          assert.strictEqual(l.length, 3, b.toString()); assert.strictEqual(l[0], 'time,temp_c,humidity,note');
-          assert.ok(/,,,boot$/.test(l[1])); assert.ok(/,,,boot$/.test(l[2])); done();
+          assert.strictEqual(l.length, 3, b.toString()); assert.strictEqual(l[0], 'time,temp_c,humidity,lat,lon,alt_m,sats,note');
+          assert.ok(/,,,,,,,boot$/.test(l[1])); assert.ok(/,,,,,,,boot$/.test(l[2])); done();
         });
       });
     });
   });
 });
 
-test('cycle at minute 3 writes one reading row and no photo; every row has four columns', function (done) {
+test('cycle at minute 3 writes one reading row and no photo; every row has eight columns', function (done) {
   var path = img.fresh(), m = make(path), a = app.create(m.deps);
   a.boot(false, function () {
     a.cycle(3, function () {
       assert.strictEqual(m.calls.indexOf('capture'), -1);
       mountImg(path, function (vol) {
-        readFile(vol, 'LOG.CSV', function (b) {
+        readFile(vol, 'DATA.CSV', function (b) {
           var l = lines(b); assert.strictEqual(l.length, 3);
-          assert.ok(/^2026-11-19 00:00:\d\d,21\.3,40\.1,$/.test(l[2]), l[2]);
-          l.forEach(function (row) { assert.strictEqual(row.split(',').length, 4, row); });
+          assert.ok(/^2026-11-19 00:00:\d\d,21\.3,40\.1,,,,,$/.test(l[2]), l[2]);
+          l.forEach(function (row) { assert.strictEqual(row.split(',').length, 8, row); });
           vol.highestImageNumber(function (e, n) { assert.strictEqual(n, 0); done(); });
         });
       });
@@ -124,9 +124,9 @@ test('camera failure: photo_err row, no IMG file, log keeps going', function (do
     a.cycle(5, function () {
       assert.strictEqual(a.ready, true);
       mountImg(path, function (vol) {
-        readFile(vol, 'LOG.CSV', function (b) {
+        readFile(vol, 'DATA.CSV', function (b) {
           var l = lines(b); assert.strictEqual(l.length, 4);
-          assert.ok(/,,,photo_err$/.test(l[3]), l[3]);
+          assert.ok(/,,,,,,,photo_err$/.test(l[3]), l[3]);
           vol.highestImageNumber(function (e, n) {
             assert.strictEqual(n, 0); vol.find('IMG0001.JPG', function (e2, f) { assert.strictEqual(f, null); done(); });
           });
@@ -141,7 +141,7 @@ test('sensor failure: sensor_err row with empty value fields', function (done) {
   a.boot(false, function () {
     a.cycle(2, function () {
       mountImg(path, function (vol) {
-        readFile(vol, 'LOG.CSV', function (b) { var l = lines(b); assert.ok(/,,,sensor_err$/.test(l[2]), l[2]); done(); });
+        readFile(vol, 'DATA.CSV', function (b) { var l = lines(b); assert.ok(/,,,,,,,sensor_err$/.test(l[2]), l[2]); done(); });
       });
     });
   });
@@ -157,8 +157,8 @@ test('root directory full: photo_err, the log row is still written', function (d
           assert.strictEqual(e.code, 'DIR_FULL'); dev.close();
           a.cycle(5, function () {
             mountImg(path, function (v2) {
-              readFile(v2, 'LOG.CSV', function (b) {
-                var l = lines(b); assert.ok(/,21\.3,40\.1,$/.test(l[2]), l[2]); assert.ok(/,,,photo_err$/.test(l[3]), l[3]); done();
+              readFile(v2, 'DATA.CSV', function (b) {
+                var l = lines(b); assert.ok(/,21\.3,40\.1,,,,,$/.test(l[2]), l[2]); assert.ok(/,,,,,,,photo_err$/.test(l[3]), l[3]); done();
               });
             });
           });
@@ -168,10 +168,10 @@ test('root directory full: photo_err, the log row is still written', function (d
   });
 });
 
-test('existing LOG.CSV with a damaged entry is left alone and LOG2.CSV is used', function (done) {
+test('existing DATA.CSV with a damaged entry is left alone and DATA2.CSV is used', function (done) {
   var path = img.fresh();
   mountImg(path, function (vol, dev) {
-    vol.create('LOG.CSV', function (e, ent) {
+    vol.create('DATA.CSV', function (e, ent) {
       assert.ifError(e);
       dev.read(ent.dirLba, function (re, d) {                      // size 100 but no first cluster
         d[ent.dirOffset + 28] = 100;
@@ -181,9 +181,9 @@ test('existing LOG.CSV with a damaged entry is left alone and LOG2.CSV is used',
           a.boot(false, function (e2) {
             assert.ifError(e2);
             mountImg(path, function (v2) {
-              v2.find('LOG.CSV', function (e3, old) {
+              v2.find('DATA.CSV', function (e3, old) {
                 assert.strictEqual(old.size, 100);
-                readFile(v2, 'LOG2.CSV', function (b) { assert.ok(b && lines(b)[0] === 'time,temp_c,humidity,note'); done(); });
+                readFile(v2, 'DATA2.CSV', function (b) { assert.ok(b && lines(b)[0] === 'time,temp_c,humidity,lat,lon,alt_m,sats,note'); done(); });
               });
             });
           });
@@ -193,34 +193,36 @@ test('existing LOG.CSV with a damaged entry is left alone and LOG2.CSV is used',
   });
 });
 
-test('with GPS: boot creates GPS.CSV with its header; no-fix minute writes a nofix row after the climate row', function (done) {
+test('with GPS and no fix: the same row carries nofix; there is no separate GPS file', function (done) {
   var path = img.fresh(), m = make(path, { gps: { fix: false } }), a = app.create(m.deps);
   a.boot(false, function (e) {
     assert.ifError(e);
     a.cycle(3, function () {
       assert.deepEqual(m.calls.filter(function (c) { return c === 'climate' || c === 'gps'; }), ['climate', 'gps']);
       mountImg(path, function (vol) {
-        readFile(vol, 'GPS.CSV', function (b) {
-          var l = lines(b); assert.strictEqual(l.length, 2, b.toString());
-          assert.strictEqual(l[0], 'time,lat,lon,alt_m,sats,note'); assert.ok(/,,,,,nofix$/.test(l[1]), l[1]);
-          l.forEach(function (row) { assert.strictEqual(row.split(',').length, 6, row); });
-          done();
+        readFile(vol, 'DATA.CSV', function (b) {
+          var l = lines(b); assert.strictEqual(l.length, 3, b.toString());
+          assert.ok(/^2026-11-19 00:00:\d\d,21\.3,40\.1,,,,,nofix$/.test(l[2]), l[2]);
+          vol.find('GPS.CSV', function (fe, g) { assert.strictEqual(g, null); done(); });
         });
       });
     });
   });
 });
 
-test('with GPS: a fix is written with six decimals; a GPS error writes gps_err', function (done) {
+test('with GPS: a fix puts lat, lon, altitude and satellites on the same row; a GPS error is flagged gps_err', function (done) {
   var path = img.fresh(), m = make(path, { gps: { fix: true, lat: 42.3601234, lon: -71.0589, alt: 12.34, sats: 7 } }), a = app.create(m.deps);
   a.boot(false, function () {
     a.cycle(1, function () {
       m.deps.gpsSnapshot = function () { return { err: true }; };
       a.cycle(2, function () {
         mountImg(path, function (vol) {
-          readFile(vol, 'GPS.CSV', function (b) {
-            var l = lines(b); assert.strictEqual(l.length, 3, b.toString());
-            assert.ok(/^2026-11-19 00:00:\d\d,42\.360123,-71\.058900,12\.3,7,$/.test(l[1]), l[1]); assert.ok(/,,,,,gps_err$/.test(l[2]), l[2]); done();
+          readFile(vol, 'DATA.CSV', function (b) {
+            var l = lines(b); assert.strictEqual(l.length, 4, b.toString());
+            assert.ok(/^2026-11-19 00:00:\d\d,21\.3,40\.1,42\.360123,-71\.058900,12\.3,7,$/.test(l[2]), l[2]);
+            assert.ok(/,21\.3,40\.1,,,,,gps_err$/.test(l[3]), l[3]);
+            l.forEach(function (row) { assert.strictEqual(row.split(',').length, 8, row); });
+            done();
           });
         });
       });
@@ -228,7 +230,7 @@ test('with GPS: a fix is written with six decimals; a GPS error writes gps_err',
   });
 });
 
-test('with GPS: minute 5 order is climate, gps, then the photo; an existing GPS.CSV is appended to', function (done) {
+test('with GPS: minute 5 order is climate, gps, then the photo; an existing DATA.CSV is appended to', function (done) {
   var path = img.fresh(), m = make(path, { gps: { fix: false } }), a = app.create(m.deps);
   a.boot(false, function () {
     a.cycle(5, function () {
@@ -238,7 +240,9 @@ test('with GPS: minute 5 order is climate, gps, then the photo; an existing GPS.
       a2.boot(false, function () {
         a2.cycle(6, function () {
           mountImg(path, function (vol) {
-            readFile(vol, 'GPS.CSV', function (b) { var l = lines(b); assert.strictEqual(l.length, 3); assert.strictEqual(l[0], 'time,lat,lon,alt_m,sats,note'); done(); });
+            readFile(vol, 'DATA.CSV', function (b) {
+              var l = lines(b); assert.strictEqual(l.length, 5, b.toString()); assert.strictEqual(l[0], 'time,temp_c,humidity,lat,lon,alt_m,sats,note'); done();
+            });
           });
         });
       });
@@ -246,12 +250,12 @@ test('with GPS: minute 5 order is climate, gps, then the photo; an existing GPS.
   });
 });
 
-test('a LOG.CSV whose size exceeds its cluster chain is left untouched (no block written into it) and LOG2.CSV is used', function (done) {
+test('a DATA.CSV whose size exceeds its cluster chain is left untouched (no block written into it) and DATA2.CSV is used', function (done) {
   var path = img.fresh();
   mountImg(path, function (vol, dev) {
-    vol.create('LOG.CSV', function (e, ent) {
+    vol.create('DATA.CSV', function (e, ent) {
       assert.ifError(e);
-      vol.append(ent, new Buffer('time,temp_c,humidity,note\r\n'), function (ae, ent2) {
+      vol.append(ent, new Buffer('time,temp_c,humidity,lat,lon,alt_m,sats,note\r\n'), function (ae, ent2) {
         assert.ifError(ae);
         dev.read(ent2.dirLba, function (re, d) {
           d[ent2.dirOffset + 28] = 5000 % 256; d[ent2.dirOffset + 29] = Math.floor(5000 / 256);   // claims 5000 bytes, chain holds 27
@@ -261,9 +265,9 @@ test('a LOG.CSV whose size exceeds its cluster chain is left untouched (no block
             a.boot(false, function (e2) {
               assert.ifError(e2);
               mountImg(path, function (v2) {
-                v2.find('LOG.CSV', function (e3, old) {
-                  assert.strictEqual(old.size, 5000, 'LOG.CSV entry untouched');
-                  readFile(v2, 'LOG2.CSV', function (b) { assert.ok(b && lines(b)[0] === 'time,temp_c,humidity,note' && /,,,boot$/.test(lines(b)[1])); done(); });
+                v2.find('DATA.CSV', function (e3, old) {
+                  assert.strictEqual(old.size, 5000, 'DATA.CSV entry untouched');
+                  readFile(v2, 'DATA2.CSV', function (b) { assert.ok(b && lines(b)[0] === 'time,temp_c,humidity,lat,lon,alt_m,sats,note' && /,,,,,,,boot$/.test(lines(b)[1])); done(); });
                 });
               });
             });
@@ -286,7 +290,7 @@ test('card write failure mid-cycle: cycle still calls back, app is not ready, re
         a.cycle(4, function () {
           m.dev.close(); img.fsckClean(path);
           mountImg(path, function (vol) {
-            readFile(vol, 'LOG.CSV', function (b) { var l = lines(b); assert.ok(l.length >= 3 && /,21\.3,40\.1,$/.test(l[l.length - 1])); done(); });
+            readFile(vol, 'DATA.CSV', function (b) { var l = lines(b); assert.ok(l.length >= 3 && /,21\.3,40\.1,,,,,$/.test(l[l.length - 1])); done(); });
           });
         });
       });
