@@ -317,6 +317,49 @@ function makeVolume(dev, g) {
     s.write(bytes, function (e) { if (e) return cb(e); s.close(cb); });
   };
 
+  // Delete a file: mark its directory entry deleted FIRST (the file disappears), then free its cluster chain in every FAT
+  // copy, then fix FSInfo. A power cut in between leaves lost clusters, never an entry that points at free space.
+  // A chain that leaves the volume, loops, or hits a free cluster is refused (DAMAGED) before anything is written.
+  vol.remove = function (entry, cb) {
+    var clusters = [];
+    function collect(done) {
+      if (entry.firstCluster === 0) return done(null);                      // empty file: no chain
+      if (!validCluster(entry.firstCluster)) return done(err('DAMAGED', 'first cluster ' + entry.firstCluster + ' is outside the volume'));
+      var c = entry.firstCluster;
+      (function next() {
+        clusters.push(c);
+        if (clusters.length > g.nClusters) return done(err('DAMAGED', 'cluster chain loops'));
+        getFat(c, function (e, v) {
+          if (e) return done(e);
+          if (v >= 0x0FFFFFF8) return done(null);                           // end of chain
+          if (!validCluster(v)) return done(err('DAMAGED', 'cluster chain leaves the volume or hits a free cluster'));
+          c = v; next();
+        });
+      })();
+    }
+    collect(function (ce) {
+      if (ce) return cb(ce);
+      dev.read(entry.dirLba, function (re, d) {
+        if (re) return cb(ioErr(re));
+        d[entry.dirOffset] = 0xE5;
+        dev.write(entry.dirLba, d, function (we) {
+          if (we) return cb(ioErr(we));
+          (function free(i) {
+            if (i === clusters.length) {
+              if (clusters.length === 0) return cb(null);
+              var lowest = clusters[0];
+              for (var k = 1; k < clusters.length; k++) if (clusters[k] < lowest) lowest = clusters[k];
+              if (lowest < hint) hint = lowest;                             // the next allocation reuses the freed space
+              allocated -= clusters.length;                                 // negative: FSInfo free count goes up
+              return writeFsInfo(function (fe) { cb(fe || null); });
+            }
+            setFat(clusters[i], 0, function (se) { if (se) return cb(se); free(i + 1); });
+          })(0);
+        });
+      });
+    });
+  };
+
   vol.readAll = function (entry, cb) {
     var out = new Buffer(entry.size), got = 0;
     if (entry.size === 0) return cb(null, out);

@@ -286,6 +286,60 @@ test('a healthy entry passes checkChain (including an empty one)', function (don
   });
 });
 
+test('remove deletes one file, frees its clusters (reused by the next file), neighbours stay byte-identical, fsck clean', function (done) {
+  var img = copyImage(), dev = memdev.open(img);
+  var da = pattern(2000, 1), db = pattern(700, 2), dc = pattern(1500, 3), dd = pattern(700, 4);
+  mountVol(dev, function (vol) {
+    function make(name, data, cb) { vol.create(name, function (e, ent) { assert.ifError(e); vol.append(ent, data, function (ae, e2) { assert.ifError(ae); cb(e2); }); }); }
+    make('A.TXT', da, function (ea) { make('B.TXT', db, function (eb) { make('C.TXT', dc, function (ec) {
+      vol.remove(eb, function (re) {
+        assert.ifError(re);
+        vol.find('B.TXT', function (fe, gone) {
+          assert.ifError(fe); assert.strictEqual(gone, null, 'B.TXT is gone');
+          vol.readAll(ea, function (e1, ra) { assert.ok(ra.equals(da));
+            vol.readAll(ec, function (e2, rc) { assert.ok(rc.equals(dc));
+              make('D.TXT', dd, function (ed) {
+                assert.strictEqual(ed.firstCluster, eb.firstCluster, 'freed clusters are reused');
+                dev.close(); fsckClean(img); done();
+              });
+            });
+          });
+        });
+      });
+    }); }); });
+  });
+});
+
+test('remove refuses an entry with a cluster outside the volume and writes nothing', function (done) {
+  var img = copyImage(), dev = memdev.open(img);
+  mountVol(dev, function (vol) {
+    vol.create('X.TXT', function (e, entry) {
+      assert.ifError(e);
+      damageEntry(dev, entry, function (d, o) { d[o + 28] = 100; d[o + 26] = 0xF0; d[o + 27] = 0xFF; d[o + 20] = 0xFF; d[o + 21] = 0x0F; }, function () {
+        mountVol(dev, function (vol2) {
+          vol2.find('X.TXT', function (fe, bad) {
+            var before = dev.writes;
+            vol2.remove(bad, function (re) { assert.ok(re); assert.strictEqual(re.code, 'DAMAGED'); assert.strictEqual(dev.writes, before); dev.close(); done(); });
+          });
+        });
+      });
+    });
+  });
+});
+
+test('remove of an empty file (no clusters) just deletes the directory entry', function (done) {
+  var img = copyImage(), dev = memdev.open(img);
+  mountVol(dev, function (vol) {
+    vol.create('E.TXT', function (e, entry) {
+      assert.ifError(e);
+      vol.remove(entry, function (re) {
+        assert.ifError(re);
+        vol.find('E.TXT', function (fe, gone) { assert.strictEqual(gone, null); dev.close(); fsckClean(img); done(); });
+      });
+    });
+  });
+});
+
 test('a failed write surfaces an IO error instead of hanging', function (done) {
   var img = copyImage(), dev = memdev.open(img);
   mountVol(dev, function (vol) {
