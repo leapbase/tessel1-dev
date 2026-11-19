@@ -1,6 +1,6 @@
 # Board 2
 
-Tessel 1, recorded 2026-11-18. Board 1 is in [board-1.md](board-1.md).
+Tessel 1, recorded 2026-11-18, modules updated 2026-11-19. Board 1 is in [board-1.md](board-1.md).
 
 ## Identity
 
@@ -20,7 +20,7 @@ Find it again with `tessel list`, which prints the board ID. USB vendor and prod
 | --- | --- | --- | --- |
 | A | RF | nRF24L01 | Working. 9 of 9 registers read their power-on defaults, a write and readback of the RF channel register works. `RF_SETUP` reads `0x0f`, the default of the original nRF24L01 (the L01+ defaults to `0x0e`). Radio never transmitted, CE held low |
 | B | Relay | Two relays, plain GPIO (channel 1 = `digital[0]`, channel 2 = `digital[1]`) | Working. Verified by ear on 2026-11-18: `raw-relay-test.js` pulsed channel 1 three times, then channel 2 three times, and clicks were heard. Both channels left off. There is no chip to identify, so a software read-back alone proves nothing |
-| C | SD card | SD card on SPI | Working with a 15.3 GB SDHC card, FAT32 (read and write verified on 2026-11-18). An earlier card answered CMD0 and CMD8 but never finished ACMD41 in 25 s, so that card was bad, not the module. `raw-sd-ls.js` lists the root folder (25 entries). `raw-sd-write.js` wrote `TESSTEST.TXT` (103 bytes) to the root and read it back correctly. Chip select is pin `G1` driven by hand |
+| C | (empty) | | The SD card module that was here moved to board 1 (see below). Nothing is plugged into port C now |
 | D | IR | ATtiny84-based | Chip responds on SPI, but reports firmware version `0x01` (library expects `0x04`) and module ID `0x00` (should be `0x0B`). **Not flashed.** The IR library would flash it on first use |
 
 ## Moved to another board
@@ -28,6 +28,11 @@ Find it again with `tessel list`, which prints the board ID. USB vendor and prod
 | Module | Note |
 | --- | --- |
 | Climate (Si7005) | Was on this board and tested working on ports A and B (ID `0x50`, about 24 C, 32 %RH). Moved to board 1, so it is no longer on this board |
+| SD card | Was in port C of this board with a 15.3 GB SDHC FAT32 card (read and write verified on 2026-11-18: `raw-sd-ls.js` listed 25 root entries, `raw-sd-write.js` wrote `TESSTEST.TXT`). Moved to board 1 (port A) on 2026-11-19, so it is no longer on this board. The card there was later damaged by the logger and reformatted: see the logger notes in [board-1.md](board-1.md) |
+
+## Check on 2026-11-19
+
+Board 2 was connected again (`tessel list` shows ID `TM-00-04-f000da30-0061473c-22102586`) and the USB link was stable: four scan scripts ran back to back with no errors. `raw-board-scan.js` on ports A to D identified nothing. It only recognises climate, GPS, camera, servo and SD modules, so that is expected for the radio, relay and IR modules that are on this board. Port A heard 26 bytes of serial noise in the passive UART listen, which does not identify the radio. The module table above was not re-verified: it still reflects the 2026-11-18 tests.
 
 ## Modules tried and not working
 
@@ -49,4 +54,4 @@ Same as board 1:
 
 ## Scripts used for this board
 
-`raw-board-scan.js` (per-port identify: I2C, climate, GPS, camera), `raw-climate-test.js`, `raw-sd-test.js`, `raw-nrf24-test.js`, `raw-attiny-test.js` (read-only identity check for ambient and IR), `raw-ambient-test.js`, `raw-accel-sd-test.js`, `raw-i2c-scan.js`, `raw-relay-test.js` (switches real loads, use with care), `raw-sd-ls.js` (root-folder listing), `raw-sd-write.js` (writes one test file to a FAT32 card; defaults to a dry run with sector backups, set `WRITE = true` to write). Port letters and the module settings at the top of each script match the table above, so edit them if a module sits elsewhere.
+`raw-board-scan.js` (per-port identify: I2C, climate, GPS, camera), `raw-climate-test.js`, `raw-sd-test.js`, `raw-nrf24-test.js`, `raw-attiny-test.js` (read-only identity check for ambient and IR), `raw-ambient-test.js`, `raw-accel-sd-test.js`, `raw-i2c-scan.js`, `raw-relay-test.js` (switches real loads, use with care), `raw-sd-ls.js` (root-folder listing, needs an SD module), `raw-sd-write.js` (writes one test file to a FAT32 card; defaults to a dry run with sector backups, set `WRITE = true` to write). Port letters and the module settings at the top of each script match the table above, so edit them if a module sits elsewhere.
