@@ -119,7 +119,7 @@ A GPS module and a camera module are plugged into the board.
 | GPS (A2235-H) | **D** | Working. 73 valid SiRF binary frames in 8 s; 2 satellites seen, best C/N0 13, no fix yet (indoors) | Crashes |
 
 | Servo (PCA9685) | **A** | Detected over I2C at `0x70` (the chip's all-call address). MODE1 `0x11`, MODE2 `0x04`, PRESCALE `0x1e` are the chip's exact reset values. Servo output not driven (no servo attached to test) | Not tested |
-| Climate (Si7005) | **C**, later **D** | Working on both. ID register `0x11` = `0x50`; read 27.2 C and 27.4 %RH on C, 24.3 C and 32.9 %RH on D (2026-11-18) | Not tested (expected to crash, uses bitwise operators) |
+| Climate (Si7005) | **C**, later **D** | Working on both. ID register `0x11` = `0x50`; read 27.2 C and 27.4 %RH on C, 24.3 C and 32.9 %RH on D (2026-11-18) | Works on firmware v0.2.0: `climate-si7005` read 21.3 C, 37.6 %RH on C (expected to crash on v0.1.8, not tried there) |
 
 Climate module note: the Si7005 ignores I2C until its active-low chip select (`digital[0]` on the module) is driven low. A plain I2C scan finds nothing without it, which is why an earlier scan of port C showed no devices. `raw-climate-test.js` drives the pin low, then reads the ID, one temperature and one humidity measurement. The humidity figure uses the datasheet's linearization but no temperature compensation, so treat it as approximate.
 
