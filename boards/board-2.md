@@ -18,7 +18,7 @@ Find it again with `tessel list`, which prints the board ID. USB vendor and prod
 
 | Port | Module | Chip | Status |
 | --- | --- | --- | --- |
-| A | (not identified) | | The RF module that was recorded here on 2026-11-18 is now in port C. What, if anything, is in port A now has not been identified |
+| A | BLE | BLE113-A (Bluegiga, UART) | Module in port A as reported by the user on 2026-11-19. **Not verified.** A read-only BGAPI `system_hello` probe over UART at 115200 on port A got no reply (0 bytes, also 0 bytes of passive listening). That is inconclusive: the module may need its reset pin toggled first, and the `ble-ble113a` library, which knows the pin layout, is not installed here |
 | B | Relay | Two relays, plain GPIO (channel 1 = `digital[0]`, channel 2 = `digital[1]`) | Working. Verified by ear on 2026-11-18: `raw-relay-test.js` pulsed channel 1 three times, then channel 2 three times, and clicks were heard. Both channels left off. There is no chip to identify, so a software read-back alone proves nothing |
 | C | RF | nRF24L01 | Working, re-verified 2026-11-19 on port C with `raw-nrf24-test.js` (`PORT = 'C'`): 9 of 9 registers read their power-on defaults, a write of the RF channel register read back correctly and was restored. `RF_SETUP` reads `0x0f`, the default of the original nRF24L01. The radio stayed in standby (CE low) and never transmitted. Earlier notes (2026-11-18) had this module in port A |
 | D | IR | ATtiny84-based | Chip responds on SPI, but reports firmware version `0x01` (library expects `0x04`) and module ID `0x00` (should be `0x0B`). **Not flashed.** The IR library would flash it on first use |
@@ -32,7 +32,7 @@ Find it again with `tessel list`, which prints the board ID. USB vendor and prod
 
 ## Check on 2026-11-19
 
-Board 2 was connected again (`tessel list` shows ID `TM-00-04-f000da30-0061473c-22102586`) and the USB link was stable: four scan scripts ran back to back with no errors. `raw-board-scan.js` on ports A to D identified nothing. It only recognises climate, GPS, camera, servo and SD modules, so that is expected for the radio, relay and IR modules that are on this board. Port A heard 26 bytes of serial noise in the passive UART listen, which does not identify a module. Afterwards the radio test was run on port C and passed, which is where the nRF24 module is now (see the table above). The relay (port B) and IR (port D) rows were not re-verified: they still reflect the 2026-11-18 tests.
+Board 2 was connected again (`tessel list` shows ID `TM-00-04-f000da30-0061473c-22102586`) and the USB link was stable: four scan scripts ran back to back with no errors. `raw-board-scan.js` on ports A to D identified nothing. It only recognises climate, GPS, camera, servo and SD modules, so that is expected for the radio, relay and IR modules that are on this board. Port A heard 26 bytes of serial noise in the passive UART listen once, which does not identify a module. Afterwards the radio test was run on port C and passed, which is where the nRF24 module is now (see the table above). The relay (port B) and IR (port D) rows were not re-verified: they still reflect the 2026-11-18 tests.
 
 ## Modules tried and not working
 
