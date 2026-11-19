@@ -71,7 +71,7 @@ tessel push index.js              # write to flash so it runs on boot
 tessel erase                      # remove a pushed script
 tessel wifi <ssid> <password> <security>   # e.g. wpa2
 tessel logs                       # stream logs from the board
-tessel update                     # update firmware (check the CLI's help first)
+tessel update firmware/tessel-firmware-v0.2.0.bin   # flash a local firmware file (the build server is gone)
 ```
 
 Run `tessel --help` for the commands your CLI version supports. `tessel run` has been verified on this board with `blink.js` (connected, bundled 4 KB, ran, and streamed 10 log lines). The other commands come from the 0.3.x CLI's documented usage and have not been run against this board yet.
@@ -87,19 +87,19 @@ Modules plug into the module ports. Each has an npm package that you install in 
 | Audio | `audio-vs1053b` | Audio playback and recording |
 | BLE | `ble-ble113a` | Bluetooth Low Energy |
 | Camera | `camera-vc0706` | Photo capture |
-| Climate | `climate-si7020` | Temperature and humidity |
+| Climate | `climate-si7005` (the modules here carry an Si7005) | Temperature and humidity |
 | GPS | `gps-a2235h` | Location |
 | Relay | `relay-mono` | Switch high-power loads |
 | RFID | `rfid-pn532` | NFC and RFID reading |
 | Servo | `servo-pca9685` | Servo motor control |
 
-Example, reading the climate module on port A:
+Example, reading the climate module on port D (board 1):
 
 ```js
 var tessel = require('tessel');
-var climatelib = require('climate-si7020');
+var climatelib = require('climate-si7005');
 
-var climate = climatelib.use(tessel.port['A']);
+var climate = climatelib.use(tessel.port['D']);
 
 climate.on('ready', function () {
   climate.readTemperature('c', function (err, temp) {
@@ -111,7 +111,7 @@ climate.on('ready', function () {
 
 ## Module test results (2026-11-18)
 
-A GPS module and a camera module are plugged into the board.
+Camera and GPS were tested first on firmware v0.1.8 (library column: crashed), then the libraries were retried after the v0.2.0 flash.
 
 | Module | Port | Hardware check | Using the npm library |
 | --- | --- | --- | --- |
@@ -127,7 +127,7 @@ Scripts for these modules: `raw-i2c-scan.js` (I2C address scan for given ports),
 
 Port C is not usable for UART on this firmware (`Software UART not yet functional for this port. You must use module port A, B, or D.`).
 
-**Raw hardware tests (these work).** They use no module library: `raw-camera-test.js` (set `PORT` at the top; B for this camera) and `raw-gps-test.js` (port D, decodes the module's SiRF binary stream).
+**Raw hardware tests (these work, and were the only option on v0.1.8).** They use no module library: `raw-camera-test.js` (set `PORT` at the top; B for this camera) and `raw-gps-test.js` (port D, decodes the module's SiRF binary stream).
 
 ```sh
 nvm use 0.12
@@ -147,17 +147,19 @@ tessel run raw-camera-photo.js -u .    # saves camera-photo.jpg in the current f
 
 `process.sendfile` only saves files when `-u <dir>` (or the `TESSEL_UPLOAD_DIR` environment variable) is set. Verified on 2026-11-18: a 49,004-byte file, valid JPEG start and end markers, readable image. It takes a few seconds, since a frame is read in 128-byte chunks at 115200 baud.
 
-**Why the npm libraries crash.** `gps-a2235h` and `camera-vc0706` fail with `attempt to call field 'tointegervalue' (a nil value)` (or `attempt to call local '_f'`). The same error appeared in a plain script of ours at a line using `<<` and `|`, and went away when those were rewritten as arithmetic. So the compiler turns **bitwise operators into a call that this board's runtime does not provide**. Anything using `<<`, `>>`, `|`, `&` or `^` crashes on this firmware, and the libraries use them. Library version does not matter (tested the latest and 2014 releases), and neither does the port.
+**Why the npm libraries crashed on v0.1.8 (fixed by v0.2.0).** On the original firmware, `gps-a2235h` and `camera-vc0706` failed with `attempt to call field 'tointegervalue' (a nil value)` (or `attempt to call local '_f'`). The compiler turned **bitwise operators into a call that the v0.1.8 runtime did not provide**, so anything using `<<`, `>>`, `|`, `&` or `^` crashed, and the libraries use them. Flashing firmware v0.2.0 (commit `3b8c922`, runtime `dd434be`) fixed it on all three boards. Results on v0.2.0: `climate-si7005` works, `camera-vc0706` works, `rf-nrf24` works, and `gps-a2235h` works in port C only.
 
-Board firmware (`tessel version --board`): firmware commit `e59e352`, runtime commit `2396b5a`, Wi-Fi 1.26. `tessel update --list` fails with "There was an error getting build information" because `builds.tessel.io` no longer resolves in DNS, so a firmware update through the CLI is not possible. No firmware was changed.
+Board firmware (`tessel version --board`): all three boards now report firmware commit `3b8c922`, runtime commit `dd434be`, Wi-Fi 1.26. They were on `e59e352` / `2396b5a` before. `tessel update --list` still fails with "There was an error getting build information" because `builds.tessel.io` no longer resolves, so flash the local file in `firmware/` instead (see [firmware/README.md](firmware/README.md)).
 
-The two library-based scripts (`gps-test.js`, `camera-test.js`) are kept but will crash on this board; use the raw tests instead.
+The library-based scripts (`gps-test.js`, `camera-test.js`) crashed on v0.1.8 and should work on v0.2.0 (the GPS one needs the module in port C). The raw scripts remain useful because they need no libraries and print more detail.
 
 ## Troubleshooting
 
 - **`tessel: command not found`**: run `nvm use 0.12`. The CLI is installed only under Node 0.12.
 - **`tessel list` shows nothing**: check that the USB cable carries data, and check that the board shows up with `ioreg` (above).
 - **`SyntaxError: Unexpected token =>` or similar**: a dependency that is too new for Node 0.12 got installed. See the workarounds above.
+- **`tointegervalue (a nil value)` when running a module library**: the board is on firmware v0.1.8. Flash v0.2.0 from `firmware/`.
+- **`Could not find GPS module`**: the GPS library works only in port C.
 - **`node-gyp` errors during install**: use `--ignore-scripts` and the prebuilt `usb` binary as described above.
 
 ## Tessel 2 (not currently connected)

@@ -26,7 +26,7 @@ Find it again with `tessel list`, which prints the board ID.
 
 ## Known limits on this board
 
-- **Firmware v0.2.0 fixed the library crash (flashed 2026-11-18).** On v0.1.8, bitwise operators crashed with `tointegervalue (a nil value)`, so `gps-a2235h` and `camera-vc0706` could not run. After the flash a bitwise test script runs correctly. Library results on this board, v0.2.0: `climate-si7005` on C works (ready, 21.3 C, 37.6 %RH); `camera-vc0706` on B works (ready, took a 640x480 JPEG, 46,952 bytes); `gps-a2235h` runs without crashing but reports `Could not find GPS module` on port D.
+- **Firmware v0.2.0 fixed the library crash (flashed 2026-11-18).** On v0.1.8, bitwise operators crashed with `tointegervalue (a nil value)`, so `gps-a2235h` and `camera-vc0706` could not run. After the flash a bitwise test script runs correctly. Library results on this board, v0.2.0: `climate-si7005` on C works (ready, 21.3 C, 37.6 %RH); `camera-vc0706` on B works (ready, took a 640x480 JPEG, 46,952 bytes); `gps-a2235h` works on port C (`ready` in 1 s) but reports `Could not find GPS module` on port D. `climate-si7005` was retested on port D with the raw script.
 - Port C cannot do UART (`Software UART not yet functional for this port`). Use A, B or D.
 - `tessel update` with no file does not work: the build server `builds.tessel.io` no longer resolves. Flash a local file instead: `tessel update firmware/tessel-firmware-v0.2.0.bin` (see [firmware/](../firmware/README.md)).
 - `process.sendfile` saves files only with `tessel run <file> -u <dir>`.
