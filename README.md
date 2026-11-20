@@ -69,12 +69,18 @@ tessel list                       # connected boards
 tessel run index.js               # run a script on the board, streaming output (not saved)
 tessel push index.js              # write to flash so it runs on boot
 tessel erase                      # remove a pushed script
-tessel wifi <ssid> <password> <security>   # e.g. wpa2
+tessel wifi -n <ssid> -p <password> -s wpa2   # flags, not positional; -s is wpa2|wpa|wep, omit for open
+tessel wifi -l                    # list visible networks and show Connected: 0/1
+tessel wifi -d                    # erase saved networks
 tessel logs                       # stream logs from the board
 tessel update firmware/tessel-firmware-v0.2.0.bin   # flash a local firmware file (the build server is gone)
 ```
 
 Run `tessel --help` for the commands your CLI version supports. `tessel run` has been verified on this board with `blink.js` (connected, bundled 4 KB, ran, and streamed 10 log lines). The other commands come from the 0.3.x CLI's documented usage and have not been run against this board yet.
+
+## Wi-Fi and web servers
+
+The CC3000 sees 2.4 GHz networks only, and its scan is patchy: run `tessel wifi -l` a few times, and use `-t 40` for a longer join timeout. Verified on board 2: joined a WPA2 network on the third attempt and served pages. `hello-server.js` serves a hello page on port 80. `status-server.js` serves a read-only status page and `/status.json` (set `ENABLE_BLE = true` for a nearby-BLE summary, untested). **Press Reset before `tessel run` of a server script**: after an earlier script ran without a reset, the server did not answer (observed, cause not proven). Never commit Wi-Fi passwords.
 
 ## Modules
 

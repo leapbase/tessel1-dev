@@ -23,6 +23,12 @@ Find it again with `tessel list`, which prints the board ID. USB vendor and prod
 | C | RF | nRF24L01 | Working on C (retested 2026-11-19): 9 of 9 registers at power-on defaults, RF channel write and readback works. Radio never transmitted |
 | D | IR | ATtiny84-based | Chip responds on SPI, but reports firmware version `0x01` (library expects `0x04`) and module ID `0x00` (should be `0x0B`). **Not flashed.** The IR library would flash it on first use |
 
+## Wi-Fi and web server (2026-11-20)
+
+- Joined the 2.4 GHz WPA2 network `leapo` (got `192.168.1.75`, saved on the board; `tessel wifi -d` erases it). The first two joins timed out, the third worked with `-t 40`. Password not recorded.
+- `hello-server.js` and `status-server.js` served pages to a browser and `curl` on the same network. They answered only when run first after a Reset.
+- Status page data: board, uptime, request count, Wi-Fi address, BLE summary (BLE off by default).
+
 ## Moved off this board
 
 | Module | Note |
