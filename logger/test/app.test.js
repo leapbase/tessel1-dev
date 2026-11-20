@@ -31,12 +31,19 @@ function make(imagePath, opts) {
   };
   return { dev: dev, deps: deps, calls: calls, notes: notes };
 }
-// The logger keeps everything in the "tessel-log" folder: tests open that folder (creating it if the test runs first).
+// The logger keeps DATA.CSV in the "tessel-log" folder and the photos in "tessel-image": tests open those folders (creating them if the test runs first).
 function mountImg(imagePath, cb) {
   var dev = memdev.open(imagePath);
   fat32.mount(dev, function (e, root) {
     assert.ifError(e);
     root.ensureDir('tessel-log', function (e2, dir) { assert.ifError(e2); cb(dir, dev); });
+  });
+}
+function mountPhotos(imagePath, cb) {
+  var dev = memdev.open(imagePath);
+  fat32.mount(dev, function (e, root) {
+    assert.ifError(e);
+    root.ensureDir('tessel-image', function (e2, dir) { assert.ifError(e2); cb(dir, dev); });
   });
 }
 function readFile(vol, name, cb) {
@@ -96,7 +103,7 @@ test('minute 5 logs first, then takes IMG0001.JPG with exact bytes; minute 10 ad
     a.cycle(5, function () {
       assert.deepEqual(m.calls.slice(m.calls.indexOf('climate'), m.calls.indexOf('capture') + 1), ['climate', 'capture']);
       a.cycle(10, function () {
-        mountImg(path, function (vol, dev) {
+        mountPhotos(path, function (vol, dev) {
           readFile(vol, 'IMG0001.JPG', function (b1) {
             assert.ok(b1.equals(JPEG));
             readFile(vol, 'IMG0002.JPG', function (b2) { assert.ok(b2.equals(JPEG)); dev.close(); img.fsckClean(path); done(); });
@@ -109,13 +116,13 @@ test('minute 5 logs first, then takes IMG0001.JPG with exact bytes; minute 10 ad
 
 test('photo numbering continues after the highest existing IMGnnnn.JPG', function (done) {
   var path = img.fresh();
-  mountImg(path, function (vol, dev) {
+  mountPhotos(path, function (vol, dev) {
     vol.create('IMG0007.JPG', function (e) {
       assert.ifError(e); dev.close();
       var m = make(path), a = app.create(m.deps);
       a.boot(false, function () {
         a.cycle(5, function () {
-          mountImg(path, function (v2) { v2.find('IMG0008.JPG', function (e2, f) { assert.ifError(e2); assert.ok(f && f.size === 3000); done(); }); });
+          mountPhotos(path, function (v2) { v2.find('IMG0008.JPG', function (e2, f) { assert.ifError(e2); assert.ok(f && f.size === 3000); done(); }); });
         });
       });
     });
@@ -131,8 +138,10 @@ test('camera failure: photo_err row, no IMG file, log keeps going', function (do
         readFile(vol, 'DATA.CSV', function (b) {
           var l = lines(b); assert.strictEqual(l.length, 4);
           assert.ok(/,,,,,,,photo_err$/.test(l[3]), l[3]);
-          vol.highestImageNumber(function (e, n) {
-            assert.strictEqual(n, 0); vol.find('IMG0001.JPG', function (e2, f) { assert.strictEqual(f, null); done(); });
+          mountPhotos(path, function (pv) {
+            pv.highestImageNumber(function (e, n) {
+              assert.strictEqual(n, 0); pv.find('IMG0001.JPG', function (e2, f) { assert.strictEqual(f, null); done(); });
+            });
           });
         });
       });
@@ -151,10 +160,10 @@ test('sensor failure: sensor_err row with empty value fields', function (done) {
   });
 });
 
-test('root directory full: photo_err, the log row is still written', function (done) {
+test('photo folder full: photo_err, the log row is still written', function (done) {
   var path = img.fresh(), m = make(path), a = app.create(m.deps);
   a.boot(false, function () {
-    mountImg(path, function (vol, dev) {
+    mountPhotos(path, function (vol, dev) {
       (function fill(i) {
         vol.create('F' + (1000 + i) + '.TXT', function (e) {
           if (!e) return fill(i + 1);
@@ -282,7 +291,7 @@ test('a DATA.CSV whose size exceeds its cluster chain is left untouched (no bloc
   });
 });
 
-test('everything the logger writes lives in the tessel-log folder; the root only holds the folder', function (done) {
+test('DATA.CSV lives in tessel-log and photos in tessel-image; the root only holds the two folders', function (done) {
   var path = img.fresh(), m = make(path, { gps: { fix: false } }), a = app.create(m.deps);
   a.boot(false, function (e) {
     assert.ifError(e);
@@ -295,8 +304,26 @@ test('everything the logger writes lives in the tessel-log folder; the root only
           root.highestImageNumber(function (e2, n) {
             assert.strictEqual(n, 0, 'no photos in the root');
             root.findDir('tessel-log', function (e3, dir) {
-              assert.ifError(e3); assert.ok(dir, 'the folder exists');
-              dev.close(); img.fsckClean(path); done();
+              assert.ifError(e3); assert.ok(dir, 'the log folder exists');
+              root.ensureDir('tessel-log', function (e4, logVol) {      // the folder exists, so this just opens it
+                assert.ifError(e4);
+                logVol.highestImageNumber(function (e4b, nl) {
+                  assert.strictEqual(nl, 0, 'no photos in tessel-log');
+                  root.findDir('tessel-image', function (e5, pdir) {
+                    assert.ifError(e5); assert.ok(pdir, 'the photo folder exists');
+                    root.ensureDir('tessel-image', function (e5b, photoVol) {
+                      assert.ifError(e5b);
+                      photoVol.find('DATA.CSV', function (e6, csv) {
+                        assert.strictEqual(csv, null, 'no DATA.CSV in tessel-image');
+                        photoVol.highestImageNumber(function (e7, np) {
+                          assert.strictEqual(np, 1, 'IMG0001.JPG is in tessel-image');
+                          dev.close(); img.fsckClean(path); done();
+                        });
+                      });
+                    });
+                  });
+                });
+              });
             });
           });
         });

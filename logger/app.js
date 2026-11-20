@@ -1,5 +1,6 @@
 // Logger logic with its hardware injected, so it runs against a FAT32 image on the Mac and against the board alike.
-// Files live in the tessel-log folder. One DATA.CSV row per minute carries temperature, humidity and the GPS state together; a photo follows every 5th minute.
+// DATA.CSV lives in the tessel-log folder and the photos (IMGnnnn.JPG) in the tessel-image folder; nothing is written to the root.
+// One DATA.CSV row per minute carries temperature, humidity and the GPS state together; a photo follows every 5th minute.
 // create(deps) -> app with app.ready, app.boot(recovering, cb(err)), app.cycle(minute, cb()). cycle never reports errors:
 // it logs them, blinks, and clears app.ready so the caller re-boots (re-mounts) before the next cycle.
 // deps: openCard(cb(err, dev)), mount(dev, cb(err, vol)), climateRead(cb(err, {tempC, humidity})),
@@ -12,12 +13,13 @@ var rows = require('./rows');
 var CARD_ERRORS = ['IO', 'NO_CARD', 'INIT', 'NOT_FAT32'];     // the card or filesystem is unusable; anything else is a per-file problem
 
 var LOG_DIR = 'tessel-log';
+var IMAGE_DIR = 'tessel-image';
 
 function pad4(n) { return ('000' + n).slice(-4); }
 
 exports.create = function (deps) {
   var app = { ready: false };
-  var vol = null, logEntry = null, imgNo = 0;
+  var vol = null, imgVol = null, logEntry = null, imgNo = 0;   // vol: the log folder, imgVol: the photo folder
 
   function stamp() { return clock.format(deps.nowEpoch()); }
   function cardFailed(e) {
@@ -62,15 +64,19 @@ exports.create = function (deps) {
         rootVol.ensureDir(LOG_DIR, function (e2b, dir) {          // everything the logger writes goes in this folder
           if (e2b) return bad(e2b);
           vol = dir;
-          openLog('DATA.CSV', rows.header(), function (e3, entry) {
-            if (e3 && e3.code === 'DAMAGED') return openLog('DATA2.CSV', rows.header(), gotLog);
-            gotLog(e3, entry);
+          rootVol.ensureDir(IMAGE_DIR, function (e2c, imgDir) {   // photos get their own folder
+            if (e2c) return bad(e2c);
+            imgVol = imgDir;
+            openLog('DATA.CSV', rows.header(), function (e3, entry) {
+              if (e3 && e3.code === 'DAMAGED') return openLog('DATA2.CSV', rows.header(), gotLog);
+              gotLog(e3, entry);
+            });
           });
         });
         function gotLog(le, entry) {
           if (le) return bad(le);
           logEntry = entry;
-          vol.highestImageNumber(function (e4, n) {
+          imgVol.highestImageNumber(function (e4, n) {
             if (e4) return bad(e4);
             imgNo = n;
             function ready() { app.ready = true; cb(null); }
@@ -96,9 +102,9 @@ exports.create = function (deps) {
       if (e) return photoFailed(e, cb);
       var jpeg = Buffer.concat(chunks);                          // the whole JPEG is in RAM before any file exists: no partial files
       var name = 'IMG' + pad4(imgNo + 1) + '.JPG';
-      vol.create(name, function (ce, entry) {
+      imgVol.create(name, function (ce, entry) {
         if (ce) return photoFailed(ce, cb);
-        vol.append(entry, jpeg, function (ae) {
+        imgVol.append(entry, jpeg, function (ae) {
           if (ae) return photoFailed(ae, cb);
           imgNo++;
           deps.say('saved ' + name + ' (' + jpeg.length + ' bytes)');

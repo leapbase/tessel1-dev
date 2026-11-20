@@ -59,3 +59,5 @@ Board 1 layout for the logger (`logger/`): SD card A, camera B, GPS C, climate D
 | `IMG0002.JPG`, `IMG0003.JPG` | 46,940 and 46,784 bytes | Valid 640x480 JPEGs, 5 minutes apart |
 
 `raw-sd-get.js` lists the `tessel-log` folder and prints each JPEG as `HEX <name> <offset> <hex>` log lines, which are rebuilt on the computer (`process.sendfile` stopped after the first file). The first card init after a previous run sometimes fails with `CMD0 failed`; running it again works.
+
+**Photos now go to their own folder (2026-11-20).** The logger writes `DATA.CSV` to `tessel-log` and photos to a new `tessel-image` folder; nothing goes in the card's root. Verified on this board: after a short run the root held `tessel-log` and `tessel-image`, and `tessel-image` had `IMG0001.JPG` (48,192 bytes). Photo numbering starts at 1 in the new folder. The three older files in `tessel-log` (`IMG0001.JPG` empty, `IMG0002.JPG`, `IMG0003.JPG`) were not moved. To list the new folder, set `DIR_NAME` to `TESSEL~2` in `raw-sd-get.js` (the short name of `tessel-image`).

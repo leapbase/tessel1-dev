@@ -1,4 +1,4 @@
-// Tessel 1 standalone logger: temperature and humidity to LOG.CSV every minute, a photo to IMGnnnn.JPG every 5 minutes.
+// Tessel 1 standalone logger: temperature and humidity to LOG.CSV every minute, a photo to tessel-image/IMGnnnn.JPG every 5 minutes (DATA.CSV is in tessel-log).
 // Ports (board 1): SD card A, camera B, GPS C, climate D. Also GPS.CSV: lat/lon/alt/satellites every minute (nofix indoors).
 // Push with logger/push.sh (it fills in START_EPOCH).
 var tessel = require('tessel');
