@@ -18,9 +18,9 @@ Find it again with `tessel list`, which prints the board ID. USB vendor and prod
 
 | Port | Module | Chip | Status |
 | --- | --- | --- | --- |
-| A | BLE | BLE113A (BGAPI over UART, 9600 baud, reset pin `digital[2]`) | Alive. After a reset pulse it sent its boot event (`80 0c 00 00 01 00 02 00 02 00 5d 00 03 00 01 06`): firmware 1.2.2 build 93, link layer 3, protocol 1, hardware 6. The BGAPI `hello` and `get_info` commands got no reply, unresolved. Not flashed. Test: `raw-ble-test.js`. UART works on A, not on C |
+| A | BLE | BLE113A (BGAPI over UART, 9600 baud, reset pin `digital[2]`) | Alive. After a reset pulse it sent its boot event (`80 0c 00 00 01 00 02 00 02 00 5d 00 03 00 01 06`): firmware 1.2.2 build 93, link layer 3, protocol 1, hardware 6. My raw BGAPI `hello` and `get_info` commands got no reply (unresolved), but the `ble-ble113a` 0.2.0 library works on A: `ready`, and a 15 s scan saw 145 advertisements from 23 nearby devices (needs `bglib`, `async`, `bleadvertise` installed beside it). Not flashed. Scripts: `raw-ble-test.js`, `ble-lib-scan.js`. Test: `raw-ble-test.js`. UART works on A, not on C |
 | B | Relay | Two relays, plain GPIO (channel 1 = `digital[0]`, channel 2 = `digital[1]`) | Working. Verified by ear on 2026-11-18: `raw-relay-test.js` pulsed channel 1 three times, then channel 2 three times, and clicks were heard. Both channels left off. There is no chip to identify, so a software read-back alone proves nothing |
-| C | RF | nRF24L01 | Moved here from A. Was working on A (see below); not retested on C |
+| C | RF | nRF24L01 | Working on C (retested 2026-11-19): 9 of 9 registers at power-on defaults, RF channel write and readback works. Radio never transmitted |
 | D | IR | ATtiny84-based | Chip responds on SPI, but reports firmware version `0x01` (library expects `0x04`) and module ID `0x00` (should be `0x0B`). **Not flashed.** The IR library would flash it on first use |
 
 ## Moved off this board
