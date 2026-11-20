@@ -47,3 +47,15 @@ The `gps-a2235h` library uses the firmware's software UART, which on Tessel 1 ex
 - **Clock:** the board has no clock. Times are the push time plus uptime, so after a power cut they restart from the push time; a `boot` row in `LOG.CSV` marks each restart.
 - **Speed:** the SD driver uses Buffers and one large SPI transfer per block (a block read is about 0.26 s), so a photo cycle takes about a minute and no minute rows are missing.
 - **Tests:** `node logger/test/clock.test.js`, `schedule.test.js`, `runner.test.js`, `fat32.test.js`, `app.test.js` on the Mac (they use real FAT32 images and `fsck_msdos`). On-board checks: `logger/spike-sd.js`, `logger/spike-sensors.js`.
+
+## Logger run and SD card readback (2026-11-20)
+
+Board 1 layout for the logger (`logger/`): SD card A, camera B, GPS C, climate D. A 7 minute `tessel run` of the logger wrote to the card's `tessel-log` folder:
+
+| File | Size | Notes |
+| --- | --- | --- |
+| `DATA.CSV` | 479 bytes | 11 rows (the file is `DATA.CSV`, not the `LOG.CSV` named in the logger's header). Temperature 21.8 to 23.2 C, humidity 36.0 to 32.8 %RH, GPS columns empty (`nofix`) |
+| `IMG0001.JPG` | 0 bytes | Left by an interrupted write in the 2026-11-19 session |
+| `IMG0002.JPG`, `IMG0003.JPG` | 46,940 and 46,784 bytes | Valid 640x480 JPEGs, 5 minutes apart |
+
+`raw-sd-get.js` lists the `tessel-log` folder and prints each JPEG as `HEX <name> <offset> <hex>` log lines, which are rebuilt on the computer (`process.sendfile` stopped after the first file). The first card init after a previous run sometimes fails with `CMD0 failed`; running it again works.
